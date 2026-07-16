@@ -19,7 +19,14 @@ const state = {
   profileResearcher: '',
   profileView: 'INDIVIDUAL',
   downloadUrl: '',
-  logLines: []
+  logLines: [],
+  curriculumCache: { signature: '', documents: [] },
+  fellowCandidates: [],
+  selectedFellowIds: new Set(),
+  selectedFellowNames: new Set(),
+  fellowSelectionReady: false,
+  fellowSelectionSignature: '',
+  productivityWeight: 0
 };
 
 const $ = (id) => document.getElementById(id);
@@ -30,6 +37,7 @@ function cacheElements() {
     'yearStart', 'yearEnd', 'scoreMode', 'lattesFiles', 'dropZone',
     'fileSummary', 'toggleRefs', 'referencePanel', 'qualisFile', 'sjrFile', 'jcrFile',
     'eventsFile', 'articleWeightsFile', 'generalWeightsFile', 'fellowsFile',
+    'refreshFellowsBtn', 'fellowSelectAllBtn', 'fellowClearAllBtn', 'fellowSelectionStatus', 'fellowSelectionTable',
     'processBtn', 'downloadLink', 'downloadLinkResults', 'progressSection', 'progressLabel',
     'progressPercent', 'progressBar', 'logBox', 'resultsSection', 'summaryCards',
     'resultsMeta', 'rankingChart', 'annualChart', 'productionMixChart',
@@ -249,22 +257,36 @@ async function getReferenceText(key) {
   );
 }
 
+function updateReferencePath(key) {
+  const target = document.querySelector(`[data-ref-active="${key}"]`);
+  if (!target) return;
+  const override = state.overrides[key];
+  target.textContent = override ? `${override.name} (seleção temporária)` : DEFAULT_FILES[key];
+  target.title = override ? 'Arquivo escolhido no computador para esta execução' : 'Arquivo carregado automaticamente do diretório padrão do projeto';
+}
+
 function markReferenceStatus(key, mode = 'ready') {
   const dot = document.querySelector(`[data-ref-status="${key}"]`);
-  if (!dot) return;
-  dot.classList.remove('ready', 'override');
-  dot.classList.add(mode);
-  dot.title = mode === 'override' ? 'Arquivo selecionado pelo usuário' : (window.location.protocol === 'file:' ? 'Tabela padrão integrada ao projeto' : 'Arquivo padrão do site');
+  if (dot) {
+    dot.classList.remove('ready', 'override');
+    dot.classList.add(mode);
+    dot.title = mode === 'override' ? 'Arquivo selecionado pelo usuário' : (window.location.protocol === 'file:' ? 'Tabela padrão integrada ao projeto' : 'Arquivo padrão do site');
+  }
+  updateReferencePath(key);
 }
 
 function bindReferenceInput(element, key) {
-  element.addEventListener('change', () => {
+  element.addEventListener('change', async () => {
     if (element.files?.[0]) {
       state.overrides[key] = element.files[0];
       markReferenceStatus(key, 'override');
     } else {
       delete state.overrides[key];
       markReferenceStatus(key, 'ready');
+    }
+    if (key === 'fellows' || key === 'generalWeights') {
+      state.fellowSelectionReady = false;
+      await refreshFellowCandidates();
     }
   });
 }
@@ -467,6 +489,157 @@ async function loadCurricula(files) {
   return documents;
 }
 
+function curriculumFilesSignature(files) {
+  return Array.from(files || []).map((file) => `${file.name}|${file.size}|${file.lastModified || 0}`).sort().join('||');
+}
+
+async function getCurriculumDocuments(files) {
+  const signature = curriculumFilesSignature(files);
+  if (signature && state.curriculumCache.signature === signature && state.curriculumCache.documents.length) {
+    return state.curriculumCache.documents;
+  }
+  const documents = await loadCurricula(files);
+  state.curriculumCache = { signature, documents };
+  return documents;
+}
+
+function extractCurriculumIdentity(xmlText, source = '') {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) return null;
+  const root = doc.documentElement;
+  if (!root || root.tagName !== 'CURRICULO-VITAE') return null;
+  const general = doc.getElementsByTagName('DADOS-GERAIS')[0];
+  const name = String(general?.getAttribute('NOME-COMPLETO') || safeFileName(source)).trim();
+  const idLattes = String(root.getAttribute('NUMERO-IDENTIFICADOR') || '').replace(/\D/g, '');
+  return { name, normalizedName: normalizeText(name), idLattes, source };
+}
+
+function parseFellowsReference(text) {
+  const parsed = parseCsv(text);
+  const idColumn = findColumn(parsed.headers, ['IDLattes', 'ID Lattes', 'NumeroIdentificador'], false);
+  const nameColumn = findColumn(parsed.headers, ['NomeBolsista', 'Nome', 'Bolsista'], false);
+  const rows = parsed.rows.map((row) => ({
+    idLattes: idColumn ? String(row[idColumn] ?? '').replace(/\D/g, '') : '',
+    name: nameColumn ? String(row[nameColumn] ?? '').trim() : ''
+  })).filter((row) => row.idLattes || row.name);
+  return {
+    rows,
+    ids: new Set(rows.map((row) => row.idLattes).filter(Boolean)),
+    names: new Set(rows.map((row) => normalizeText(row.name)).filter(Boolean))
+  };
+}
+
+function productivityWeightFromText(text) {
+  const parsed = parseCsv(text);
+  const typeColumn = findColumn(parsed.headers, ['TIPOPRODUTO', 'Tipo', 'Produto'], false);
+  const weightColumn = findColumn(parsed.headers, ['PESOS', 'Peso', 'Pesos'], false);
+  if (!typeColumn || !weightColumn) return 0;
+  const row = parsed.rows.find((item) => normalizeText(item[typeColumn]) === normalizeText('ProdutividadeCNPq'));
+  return row ? parseNumber(row[weightColumn]) : 0;
+}
+
+function fellowCandidateIsSelected(candidate) {
+  return (candidate.idLattes && state.selectedFellowIds.has(candidate.idLattes)) || state.selectedFellowNames.has(candidate.normalizedName);
+}
+
+function setFellowCandidateSelected(candidate, selected) {
+  if (selected) {
+    if (candidate.idLattes) state.selectedFellowIds.add(candidate.idLattes);
+    state.selectedFellowNames.add(candidate.normalizedName);
+  } else {
+    if (candidate.idLattes) state.selectedFellowIds.delete(candidate.idLattes);
+    state.selectedFellowNames.delete(candidate.normalizedName);
+  }
+}
+
+function synchronizeFellowCandidates(documents, defaultIds, defaultNames, productivityWeight, signature, resetSelection = false) {
+  const candidatesMap = new Map();
+  for (const document of documents) {
+    const identity = extractCurriculumIdentity(document.xmlText, document.source);
+    if (!identity) continue;
+    const key = identity.idLattes || identity.normalizedName;
+    if (!key || candidatesMap.has(key)) continue;
+    candidatesMap.set(key, {
+      ...identity,
+      defaultListed: (identity.idLattes && defaultIds.has(identity.idLattes)) || defaultNames.has(identity.normalizedName)
+    });
+  }
+  state.fellowCandidates = [...candidatesMap.values()].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  state.productivityWeight = productivityWeight;
+  const shouldReset = resetSelection || !state.fellowSelectionReady || state.fellowSelectionSignature !== signature;
+  if (shouldReset) {
+    state.selectedFellowIds = new Set();
+    state.selectedFellowNames = new Set();
+    state.fellowCandidates.filter((candidate) => candidate.defaultListed).forEach((candidate) => setFellowCandidateSelected(candidate, true));
+  }
+  state.fellowSelectionReady = true;
+  state.fellowSelectionSignature = signature;
+  renderFellowSelectionTable();
+}
+
+function renderFellowSelectionTable() {
+  if (!els.fellowSelectionTable || !els.fellowSelectionStatus) return;
+  const candidates = state.fellowCandidates;
+  const selected = candidates.filter(fellowCandidateIsSelected);
+  const weight = state.productivityWeight;
+  els.fellowSelectAllBtn.disabled = !candidates.length;
+  els.fellowClearAllBtn.disabled = !candidates.length || !selected.length;
+  if (!candidates.length) {
+    els.fellowSelectionStatus.textContent = 'Nenhum docente foi identificado. Escolha currículos ZIP/XML e clique em “Ler docentes dos currículos”.';
+    els.fellowSelectionTable.innerHTML = '';
+    return;
+  }
+  const potentialPoints = selected.length * weight;
+  els.fellowSelectionStatus.innerHTML = `<strong>${selected.length} de ${candidates.length}</strong> docente(s) selecionado(s) · ${formatNumber(weight)} ponto(s) por bolsista · ${formatNumber(potentialPoints)} ponto(s) potenciais no conjunto.`;
+  const rows = candidates.map((candidate, index) => {
+    const checked = fellowCandidateIsSelected(candidate);
+    const origin = candidate.defaultListed ? 'Tabela padrão' : (checked ? 'Inclusão manual' : 'Não selecionado');
+    return `<tr>
+      <td class="checkbox-cell"><input type="checkbox" data-fellow-index="${index}" ${checked ? 'checked' : ''} aria-label="Selecionar ${escapeHtml(candidate.name)} como bolsista de produtividade"></td>
+      <td><strong>${escapeHtml(candidate.name)}</strong><small>${escapeHtml(candidate.source)}</small></td>
+      <td><code>${escapeHtml(candidate.idLattes || 'não informado')}</code></td>
+      <td><span class="fellow-origin ${candidate.defaultListed ? 'default' : (checked ? 'manual' : '')}">${escapeHtml(origin)}</span></td>
+      <td>${checked ? formatNumber(weight) : '0'}</td>
+    </tr>`;
+  }).join('');
+  els.fellowSelectionTable.innerHTML = `<table class="fellows-table">
+    <thead><tr><th>Incluir</th><th>Docente</th><th>ID Lattes</th><th>Origem da seleção</th><th>Pontos</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+async function refreshFellowCandidates(resetSelection = true) {
+  const files = Array.from(els.lattesFiles?.files || []);
+  if (!files.length) {
+    state.curriculumCache = { signature: '', documents: [] };
+    state.fellowCandidates = [];
+    state.selectedFellowIds = new Set();
+    state.selectedFellowNames = new Set();
+    state.fellowSelectionReady = false;
+    state.fellowSelectionSignature = '';
+    renderFellowSelectionTable();
+    return;
+  }
+  const signature = curriculumFilesSignature(files);
+  els.fellowSelectionStatus.textContent = 'Lendo os currículos e preparando a lista de docentes...';
+  els.refreshFellowsBtn.disabled = true;
+  try {
+    const [documents, fellowsText, generalWeightsText] = await Promise.all([
+      getCurriculumDocuments(files),
+      getReferenceText('fellows'),
+      getReferenceText('generalWeights')
+    ]);
+    const defaults = parseFellowsReference(fellowsText);
+    synchronizeFellowCandidates(documents, defaults.ids, defaults.names, productivityWeightFromText(generalWeightsText), signature, resetSelection);
+  } catch (error) {
+    console.error(error);
+    els.fellowSelectionStatus.innerHTML = `<span class="error-inline">Não foi possível montar a lista: ${escapeHtml(error.message)}</span>`;
+  } finally {
+    els.refreshFellowsBtn.disabled = false;
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Preparação das tabelas de referência
 // -----------------------------------------------------------------------------
@@ -550,9 +723,10 @@ async function prepareReferences() {
     qualis: String(row[eventQualis] ?? '').trim()
   })).filter((row) => row.title && row.qualis);
 
-  const fellowsParsed = parseCsv(texts.fellows);
-  const fellowsId = findColumn(fellowsParsed.headers, ['IDLattes', 'ID Lattes', 'NumeroIdentificador'], false);
-  const fellowsSet = new Set(fellowsId ? fellowsParsed.rows.map((row) => String(row[fellowsId] ?? '').replace(/\D/g, '')).filter(Boolean) : []);
+  const fellowsReference = parseFellowsReference(texts.fellows);
+  const fellowsSet = new Set(fellowsReference.ids);
+  const fellowsNameSet = new Set(fellowsReference.names);
+  const fellowsRows = fellowsReference.rows;
 
   setProgress(48, 'Lendo e indexando a tabela SJR...');
   const sjrParsed = parseCsv(texts.sjr);
@@ -626,7 +800,7 @@ async function prepareReferences() {
 
   log(`Referências prontas: ${qualisMap.size.toLocaleString('pt-BR')} ISSNs CAPES, ${sjrMap.size.toLocaleString('pt-BR')} ISSNs SJR e ${jcrMap.size.toLocaleString('pt-BR')} identificadores JCR.`);
   return {
-    articleWeights, generalWeights, generalMap, qualisMap, eventList, fellowsSet,
+    articleWeights, generalWeights, generalMap, qualisMap, eventList, fellowsSet, fellowsNameSet, fellowsRows,
     sjrMap, sjrValues, percentiles: sjrPercentiles, sjrPercentiles,
     jcrMap, jcrValues, jcrPercentiles
   };
@@ -1043,6 +1217,7 @@ function parseCurriculum(xmlText, source, config, refs) {
   const articleRows = scoreArticles(doc, name, config.start, config.end, config.scoreMode, refs);
   const eventRows = scoreCompleteEvents(doc, config.start, config.end, refs);
   const counts = countProductions(doc, config.start, config.end, idLattes, refs);
+  counts.ProdutividadeCNPq = (idLattes && refs.fellowsSet.has(idLattes)) || refs.fellowsNameSet?.has(normalizeText(name)) ? 1 : 0;
   const yearly = extractYearlyProfile(doc, config.start, config.end);
   const points = { Artigos: articleRows.reduce((sum, row) => sum + Number(row.Peso), 0) };
   for (const rule of refs.generalWeights) {
@@ -1304,9 +1479,30 @@ async function processAll() {
   try {
     const refs = await prepareReferences();
     setProgress(58, 'Descompactando currículos...');
-    const documents = await loadCurricula(files);
+    const documents = await getCurriculumDocuments(files);
     if (!documents.length) throw new Error('Nenhum arquivo curriculo.xml foi encontrado.');
     log(`${documents.length} currículo(s) XML encontrado(s).`);
+
+    const signature = curriculumFilesSignature(files);
+    if (!state.fellowSelectionReady || state.fellowSelectionSignature !== signature) {
+      synchronizeFellowCandidates(
+        documents,
+        new Set(refs.fellowsSet),
+        new Set(refs.fellowsNameSet || []),
+        refs.generalMap.get('ProdutividadeCNPq')?.weight || 0,
+        signature,
+        true
+      );
+    }
+    refs.fellowsSet = new Set(state.selectedFellowIds);
+    refs.fellowsNameSet = new Set(state.selectedFellowNames);
+    refs.selectedFellowsRows = state.fellowCandidates.filter(fellowCandidateIsSelected).map((candidate) => ({
+      Nome: candidate.name,
+      IDLattes: candidate.idLattes,
+      Origem: candidate.defaultListed ? 'Tabela padrão' : 'Inclusão manual',
+      Pontos: refs.generalMap.get('ProdutividadeCNPq')?.weight || 0
+    }));
+    log(`${refs.selectedFellowsRows.length} docente(s) selecionado(s) para a pontuação de Produtividade CNPq.`);
 
     const researchers = [];
     const errors = [];
@@ -1380,6 +1576,7 @@ function renderResults() {
     ['Artigos únicos', summary.uniqueArticleCount, 'sem duplicar coautorias internas'],
     ['Pontuação acumulada', formatNumber(summary.grandPoints), `mediana: ${formatNumber(summary.medianPoints)}`],
     ['Cobertura de DOI', `${formatNumber(summary.doiCoverage, 1)}%`, `CAPES: ${formatNumber(summary.capesCoverage, 1)}% · SJR: ${formatNumber(summary.sjrCoverage, 1)}% · JCR: ${formatNumber(summary.jcrCoverage, 1)}%`],
+    ['Bolsistas de produtividade', results.refs.selectedFellowsRows?.length || 0, 'selecionados para pontuação'],
     ['Maior pontuação', top ? formatNumber(top.TotalPontos) : '—', top?.Nomes || '—']
   ].map(([label, value, note]) => `<div class="summary-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small></div>`).join('');
 
@@ -1893,6 +2090,10 @@ function buildDownloadZip() {
   entries.push({ name: `Analises/${prefix}_ComposicaoPontuacao.csv`, data: rowsToCsv(analytics.productPointsRows, ['Categoria', 'Codigo', 'Pontuacao'], ';') });
   entries.push({ name: `Analises/${prefix}_FaixasSJR.csv`, data: rowsToCsv(results.sjrPercentiles, ['TipoSJR', 'SJRmin', 'SJRmax', 'Pesos'], ';') });
   entries.push({ name: `Analises/${prefix}_FaixasJCR.csv`, data: rowsToCsv(results.jcrPercentiles, ['TipoJCR', 'JCRmin', 'JCRmax', 'Pesos'], ';') });
+  entries.push({
+    name: `Analises/${prefix}_BolsistasProdutividadeSelecionados.csv`,
+    data: rowsToCsv(results.refs.selectedFellowsRows || [], ['Nome', 'IDLattes', 'Origem', 'Pontos'], ';')
+  });
 
   for (const researcher of results.researchers) {
     const base = `${safeFileName(researcher.name)}${start}-${end}_${scoreMode}`;
@@ -1909,7 +2110,7 @@ function buildDownloadZip() {
   entries.push({ name: 'Relatorio_PapaLattes.html', data: makeReportHtml(results) });
   entries.push({
     name: 'LEIA-ME.txt',
-    data: `PapaLattes Web Analítico\r\nPeríodo: ${start}-${end}\r\nPontuação: ${scoreModeLabel(scoreMode)}\r\nRegras: PapaLattes 1.2.1 corrigidas\r\nJCR: edição 2026, Fator de Impacto de 2025\r\nCurrículos processados: ${results.researchers.length}\r\nParticipações em artigos: ${analytics.articleParticipations.length}\r\nArtigos únicos: ${analytics.summary.uniqueArticleCount}\r\nCobertura CAPES: ${formatNumber(analytics.summary.capesCoverage, 1)}%\r\nCobertura SJR: ${formatNumber(analytics.summary.sjrCoverage, 1)}%\r\nCobertura JCR: ${formatNumber(analytics.summary.jcrCoverage, 1)}%\r\nArtigos com colaboração interna: ${analytics.summary.collaborationArticleCount}\r\n\r\nOs quatro arquivos XLSX históricos foram mantidos e foi acrescentado o arquivo de faixas JCR. O pacote também inclui análises institucionais, indicadores docentes, produção anual, qualidade, periódicos, colaborações e artigos únicos.\r\nGerado em: ${new Date().toLocaleString('pt-BR')}\r\n`
+    data: `PapaLattes Web Analítico\r\nPeríodo: ${start}-${end}\r\nPontuação: ${scoreModeLabel(scoreMode)}\r\nRegras: PapaLattes 1.2.1 corrigidas\r\nJCR: edição 2026, Fator de Impacto de 2025\r\nCurrículos processados: ${results.researchers.length}\r\nBolsistas de produtividade selecionados: ${results.refs.selectedFellowsRows?.length || 0}\r\nParticipações em artigos: ${analytics.articleParticipations.length}\r\nArtigos únicos: ${analytics.summary.uniqueArticleCount}\r\nCobertura CAPES: ${formatNumber(analytics.summary.capesCoverage, 1)}%\r\nCobertura SJR: ${formatNumber(analytics.summary.sjrCoverage, 1)}%\r\nCobertura JCR: ${formatNumber(analytics.summary.jcrCoverage, 1)}%\r\nArtigos com colaboração interna: ${analytics.summary.collaborationArticleCount}\r\n\r\nOs quatro arquivos XLSX históricos foram mantidos e foi acrescentado o arquivo de faixas JCR. O pacote também inclui análises institucionais, indicadores docentes, produção anual, qualidade, periódicos, colaborações e artigos únicos.\r\nGerado em: ${new Date().toLocaleString('pt-BR')}\r\n`
   });
   return zipStore(entries);
 }
@@ -1958,7 +2159,11 @@ function installEvents() {
   bindReferenceInput(els.generalWeightsFile, 'generalWeights');
   bindReferenceInput(els.fellowsFile, 'fellows');
 
-  els.lattesFiles.addEventListener('change', updateFileSummary);
+  els.lattesFiles.addEventListener('change', async () => {
+    updateFileSummary();
+    state.fellowSelectionReady = false;
+    await refreshFellowCandidates(true);
+  });
   ['dragenter', 'dragover'].forEach((eventName) => els.dropZone.addEventListener(eventName, (event) => { event.preventDefault(); els.dropZone.classList.add('dragover'); }));
   ['dragleave', 'drop'].forEach((eventName) => els.dropZone.addEventListener(eventName, (event) => { event.preventDefault(); els.dropZone.classList.remove('dragover'); }));
   els.dropZone.addEventListener('drop', (event) => {
@@ -1968,6 +2173,27 @@ function installEvents() {
     files.forEach((file) => transfer.items.add(file));
     els.lattesFiles.files = transfer.files;
     updateFileSummary();
+    state.fellowSelectionReady = false;
+    refreshFellowCandidates(true);
+  });
+
+  els.refreshFellowsBtn.addEventListener('click', () => refreshFellowCandidates(true));
+  els.fellowSelectAllBtn.addEventListener('click', () => {
+    state.fellowCandidates.forEach((candidate) => setFellowCandidateSelected(candidate, true));
+    renderFellowSelectionTable();
+  });
+  els.fellowClearAllBtn.addEventListener('click', () => {
+    state.selectedFellowIds = new Set();
+    state.selectedFellowNames = new Set();
+    renderFellowSelectionTable();
+  });
+  els.fellowSelectionTable.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('input[data-fellow-index]');
+    if (!checkbox) return;
+    const candidate = state.fellowCandidates[Number(checkbox.dataset.fellowIndex)];
+    if (!candidate) return;
+    setFellowCandidateSelected(candidate, checkbox.checked);
+    renderFellowSelectionTable();
   });
 
   els.processBtn.addEventListener('click', async () => {
