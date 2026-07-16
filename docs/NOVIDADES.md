@@ -6,7 +6,7 @@
 - painel analítico responsivo;
 - análise de evolução anual;
 - composição da pontuação por categoria;
-- distribuição de qualidade CAPES e SJR;
+- distribuição de qualidade CAPES, SJR e JCR;
 - cobertura de DOI e indexadores;
 - média, mediana, índice de Gini e concentração no top 20%;
 - relação entre artigos e pontuação;
@@ -16,3 +16,12 @@
 - perfil individual de cada docente;
 - novos XLSX e CSVs analíticos;
 - preservação dos arquivos de saída tradicionais.
+
+## Integração JCR 2026
+
+- novos modos `JCR` e `MELHOR — CAPES + JCR`;
+- indexação por ISSN e eISSN;
+- estratificação do JIF 2025 em faixas equivalentes às do SJR;
+- preservação do melhor quartil e das categorias JCR;
+- novos indicadores de cobertura JCR, artigos Q1 e JIF médio por periódico;
+- exportação das faixas JCR em XLSX e CSV.

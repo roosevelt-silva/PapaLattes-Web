@@ -11,7 +11,7 @@ Leitor ZIP e parser XML
         ↓
 Extração corrigida das produções
         ↓
-Correspondência CAPES, SJR e eventos
+Correspondência CAPES, SJR, JCR e eventos
         ↓
 Aplicação de pesos e limites
         ↓
@@ -42,8 +42,8 @@ Contém:
 - leitor e gravador de ZIP sem dependências externas;
 - parser de XML Lattes;
 - normalização de ISSN, títulos e nomes;
-- cálculo dos percentis SJR;
-- regras CAPES, SJR e MELHOR;
+- cálculo das faixas SJR e JCR;
+- regras CAPES, SJR, JCR, MELHOR CAPES + SJR e MELHOR CAPES + JCR;
 - correções do PapaLattes 1.2.1;
 - contagem e pontuação das produções;
 - deduplicação de artigos por DOI ou metadados;

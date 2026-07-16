@@ -5,7 +5,7 @@
 - 8 currículos Lattes;
 - período de 2021 a 2026;
 - pontuação de artigos pelo modo `MELHOR`;
-- tabelas CAPES, SJR, eventos, pesos e bolsistas fornecidas com o PapaLattes 2026;
+- tabelas CAPES, SJR, JCR, eventos, pesos e bolsistas;
 - regras corrigidas do PapaLattes 1.2.1.
 
 ## Resultado da execução corrigida
@@ -30,7 +30,7 @@ A diferença em relação ao total antigo de 6.959,5 pontos decorre das categori
 
 Foram verificados:
 
-- presença dos quatro arquivos XLSX tradicionais;
+- presença dos quatro arquivos XLSX tradicionais e do novo arquivo de faixas JCR;
 - presença da planilha consolidada tradicional;
 - preservação dos CSVs de artigos por docente;
 - criação dos CSVs detalhados;
@@ -43,3 +43,8 @@ Foram verificados:
 ## Observação sobre colaboração
 
 No conjunto de oito currículos utilizado, não foram encontrados artigos duplicados entre os docentes analisados. Por isso, o indicador de colaboração interna ficou zerado nesse teste. A funcionalidade permanece ativa para conjuntos que contenham coautorias internas.
+
+
+## JCR 2026
+
+A integração JCR foi validada separadamente. Consulte `VALIDACAO_JCR.md` para os números da tabela, os limites das faixas e os testes automatizados.
