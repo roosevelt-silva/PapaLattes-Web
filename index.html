@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="PapaLattes Web: análise de currículos Lattes com Qualis CAPES, SJR e indicadores institucionais.">
+  <meta name="description" content="PapaLattes Web: análise de currículos Lattes com Qualis CAPES, SJR, JCR e indicadores institucionais.">
   <title>PapaLattes Web — UFJ</title>
   <link rel="stylesheet" href="css/styles.css">
 </head>
@@ -49,8 +49,10 @@
           <label class="span-two">Estratificação dos artigos
             <select id="scoreMode">
               <option value="MELHOR" selected>MELHOR — maior peso entre CAPES e SJR</option>
-              <option value="CAPES">CAPES</option>
-              <option value="SJR">SJR</option>
+              <option value="MELHOR_JCR">MELHOR — maior peso entre CAPES e JCR</option>
+              <option value="CAPES">Somente CAPES</option>
+              <option value="SJR">Somente SJR</option>
+              <option value="JCR">Somente JCR — Fator de Impacto</option>
             </select>
           </label>
         </div>
@@ -86,6 +88,10 @@
             <input id="sjrFile" type="file" accept=".csv,text/csv">
             <small>Formato SCImago: Type, Issn e SJR.</small>
           </label>
+          <label>JCR — Fator de Impacto <span class="status-dot" data-ref-status="jcr"></span>
+            <input id="jcrFile" type="file" accept=".csv,text/csv">
+            <small>Colunas: ISSN/eISSN, JIF_2025 e QuartilMelhor.</small>
+          </label>
           <label>Qualis de eventos <span class="status-dot" data-ref-status="events"></span>
             <input id="eventsFile" type="file" accept=".csv,text/csv">
             <small>Colunas: Siglas, Conferencia e Qualis.</small>
@@ -108,7 +114,7 @@
 
     <section class="action-row">
       <button id="processBtn" class="btn btn-primary" type="button">Processar currículos</button>
-      <button id="downloadBtn" class="btn btn-success" type="button" disabled>Baixar todos os resultados</button>
+      <a id="downloadLink" class="btn btn-success download-link hidden" href="#" download>Baixar todos os resultados</a>
     </section>
 
     <section id="progressSection" class="card hidden" aria-live="polite">
@@ -122,6 +128,9 @@
 
     <section id="resultsSection" class="hidden">
       <div id="summaryCards" class="summary-cards"></div>
+      <div class="results-download-row">
+        <a id="downloadLinkResults" class="btn btn-success download-link hidden" href="#" download>Baixar todos os resultados</a>
+      </div>
 
       <section class="card">
         <div class="section-heading">
@@ -136,18 +145,16 @@
       <section class="card dashboard-card">
         <div class="section-heading dashboard-heading">
           <div>
-            <h2>Painel analítico da produção</h2>
-            <p>Indicadores de evolução, composição, qualidade, concentração e colaboração institucional.</p>
+            <p class="section-kicker">Síntese institucional</p>
+            <h2>Painel geral da produção</h2>
+            <p>Indicadores agregados de evolução, composição, qualidade, concentração e colaboração institucional. Nenhum gráfico desta seção representa um docente isoladamente.</p>
           </div>
-          <label class="profile-filter">Perfil individual
-            <select id="profileResearcher"></select>
-          </label>
         </div>
 
         <div class="analytics-grid">
           <article class="analytic-panel analytic-wide">
             <div class="panel-heading">
-              <div><h3>Evolução anual</h3><p>Participações em artigos e demais dimensões da produção.</p></div>
+              <div><h3>Evolução anual institucional</h3><p>Artigos únicos, orientações concluídas e produção técnica/inovação.</p></div>
             </div>
             <div id="annualChart" class="chart-host"></div>
           </article>
@@ -158,8 +165,18 @@
           </article>
 
           <article class="analytic-panel">
-            <div class="panel-heading"><div><h3>Qualidade dos artigos</h3><p>Distribuição por estrato CAPES dos artigos únicos.</p></div></div>
-            <div id="qualityChart" class="chart-host"></div>
+            <div class="panel-heading"><div><h3>Qualidade CAPES dos artigos</h3><p>Quantidade de artigos únicos em A1, A2, A3, A4, B1–B4, C e sem Qualis.</p></div></div>
+            <div id="qualityCapesChart" class="chart-host"></div>
+          </article>
+
+          <article id="qualityMetricPanel" class="analytic-panel hidden">
+            <div class="panel-heading"><div><h3 id="qualityMetricTitle">Qualidade pelo indicador selecionado</h3><p id="qualityMetricDescription">Distribuição por faixa.</p></div></div>
+            <div id="qualityMetricChart" class="chart-host"></div>
+          </article>
+
+          <article id="qualityJcrQuartilePanel" class="analytic-panel hidden">
+            <div class="panel-heading"><div><h3>Quartis JCR</h3><p>Quantidade de artigos únicos em Q1, Q2, Q3, Q4 e sem quartil.</p></div></div>
+            <div id="qualityJcrQuartileChart" class="chart-host"></div>
           </article>
 
           <article class="analytic-panel">
@@ -181,11 +198,6 @@
             <div class="panel-heading"><div><h3>Colaboração interna</h3><p>Artigos compartilhados entre docentes do conjunto analisado.</p></div></div>
             <div id="collaborationChart" class="chart-host"></div>
           </article>
-
-          <article class="analytic-panel analytic-wide">
-            <div class="panel-heading"><div><h3>Perfil do docente selecionado</h3><p>Indicadores quantitativos, qualidade, orientação e produção técnica.</p></div></div>
-            <div id="researcherProfile" class="chart-host"></div>
-          </article>
         </div>
       </section>
 
@@ -200,12 +212,91 @@
           <button class="tab" data-tab="journals">Periódicos</button>
           <button class="tab" data-tab="collaborations">Colaborações</button>
           <button class="tab" data-tab="uniqueArticles">Artigos únicos</button>
-          <button class="tab" data-tab="percentiles">Percentis SJR</button>
+          <button class="tab" data-tab="percentiles">Faixas SJR</button>
+          <button class="tab" data-tab="jcrPercentiles">Faixas JCR</button>
           <button class="tab" data-tab="articles">Artigos por docente</button>
           <button class="tab" data-tab="eventsDetail">Trabalhos completos</button>
         </nav>
         <div id="tabControls" class="tab-controls"></div>
         <div id="tableContainer" class="table-container"></div>
+      </section>
+
+      <section class="card profile-section">
+        <div class="section-heading profile-section-heading">
+          <div>
+            <p class="section-kicker">Perfil individual e comparação dos 10 melhores</p>
+            <h2>Análise por docente</h2>
+            <p>Escolha um docente. No modo individual, todos os gráficos abaixo se referem exclusivamente ao nome selecionado. O modo comparativo considera somente os 10 artigos de maior peso de cada docente.</p>
+          </div>
+          <div class="profile-controls">
+            <label>Tipo de análise
+              <select id="profileAnalysisMode">
+                <option value="INDIVIDUAL" selected>Perfil individual</option>
+                <option value="TOP10">Comparar docentes — 10 melhores artigos</option>
+              </select>
+            </label>
+            <label id="profileResearcherLabel">Docente
+              <select id="profileResearcher"></select>
+            </label>
+          </div>
+        </div>
+
+        <div id="individualProfilePanels" class="analytics-grid profile-analytics-grid">
+          <article class="analytic-panel analytic-wide">
+            <div class="panel-heading"><div><h3>Síntese do docente selecionado</h3><p>Indicadores quantitativos, orientação, colaboração e indexação.</p></div></div>
+            <div id="researcherProfile" class="chart-host"></div>
+          </article>
+
+          <article class="analytic-panel analytic-wide">
+            <div class="panel-heading"><div><h3>Evolução anual individual</h3><p>Produção anual exclusivamente do docente selecionado.</p></div></div>
+            <div id="profileAnnualChart" class="chart-host"></div>
+          </article>
+
+          <article class="analytic-panel">
+            <div class="panel-heading"><div><h3>Composição da pontuação individual</h3><p>Categorias que mais contribuíram para a pontuação do docente.</p></div></div>
+            <div id="profileProductionMixChart" class="chart-host"></div>
+          </article>
+
+          <article class="analytic-panel">
+            <div class="panel-heading"><div><h3>Qualidade CAPES individual</h3><p>Quantidade de artigos do docente por estrato CAPES.</p></div></div>
+            <div id="profileQualityCapesChart" class="chart-host"></div>
+          </article>
+
+          <article id="profileQualityMetricPanel" class="analytic-panel hidden">
+            <div class="panel-heading"><div><h3 id="profileQualityMetricTitle">Qualidade individual pelo indicador selecionado</h3><p>Quantidade de artigos do docente por faixa.</p></div></div>
+            <div id="profileQualityMetricChart" class="chart-host"></div>
+          </article>
+
+          <article class="analytic-panel">
+            <div class="panel-heading"><div><h3>10 artigos de maior peso</h3><p>Ranking individual dos artigos mais bem avaliados no modo de pontuação escolhido.</p></div></div>
+            <div id="profileTopArticlesChart" class="chart-host"></div>
+          </article>
+        </div>
+
+        <div id="comparisonProfilePanels" class="hidden">
+          <div id="comparisonSummary" class="comparison-summary"></div>
+          <div class="analytics-grid comparison-grid">
+            <article class="analytic-panel analytic-wide">
+              <div class="panel-heading"><div><h3>Pontuação acumulada dos 10 melhores artigos</h3><p>Compara a soma dos pesos brutos dos 10 artigos de maior qualidade de cada docente.</p></div></div>
+              <div id="top10ScoreChart" class="chart-host"></div>
+            </article>
+
+            <article class="analytic-panel analytic-wide">
+              <div class="panel-heading"><div><h3>Pontuação média dos 10 melhores artigos</h3><p>Reduz o efeito de docentes com menos de 10 artigos no período.</p></div></div>
+              <div id="top10AverageChart" class="chart-host"></div>
+            </article>
+
+            <article class="analytic-panel analytic-wide">
+              <div class="panel-heading"><div><h3>Estratos CAPES entre os 10 melhores</h3><p>Histograma empilhado por docente, sempre apresentado independentemente do modo de pontuação.</p></div></div>
+              <div id="top10CapesChart" class="chart-host"></div>
+            </article>
+
+            <article id="top10MetricPanel" class="analytic-panel analytic-wide hidden">
+              <div class="panel-heading"><div><h3 id="top10MetricTitle">Faixas do indicador entre os 10 melhores</h3><p>Histograma empilhado por docente conforme SJR ou JCR.</p></div></div>
+              <div id="top10MetricChart" class="chart-host"></div>
+            </article>
+          </div>
+        </div>
       </section>
     </section>
   </main>
