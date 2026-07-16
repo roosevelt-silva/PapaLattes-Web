@@ -9,6 +9,7 @@ if (!requireNamespace("jsonlite", quietly = TRUE)) {
 arquivos <- c(
   qualis = "qualis_periodicos.csv",
   sjr = "sjr.csv",
+  jcr = "jcr_2026.csv",
   events = "qualis_eventos.csv",
   articleWeights = "pesos_artigos.csv",
   generalWeights = "pesos_producao_geral.csv",
