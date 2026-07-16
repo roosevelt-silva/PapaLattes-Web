@@ -83,32 +83,55 @@
           <label>Qualis CAPES — periódicos <span class="status-dot" data-ref-status="qualis"></span>
             <input id="qualisFile" type="file" accept=".csv,text/csv">
             <small>Colunas esperadas: ISSN e Estrato.</small>
+            <small class="reference-path">Caminho padrão: <code>data/qualis_periodicos.csv</code><br>Em uso: <span data-ref-active="qualis">data/qualis_periodicos.csv</span></small>
           </label>
           <label>Tabela SJR <span class="status-dot" data-ref-status="sjr"></span>
             <input id="sjrFile" type="file" accept=".csv,text/csv">
             <small>Formato SCImago: Type, Issn e SJR.</small>
+            <small class="reference-path">Caminho padrão: <code>data/sjr.csv</code><br>Em uso: <span data-ref-active="sjr">data/sjr.csv</span></small>
           </label>
           <label>JCR — Fator de Impacto <span class="status-dot" data-ref-status="jcr"></span>
             <input id="jcrFile" type="file" accept=".csv,text/csv">
             <small>Colunas: ISSN/eISSN, JIF_2025 e QuartilMelhor.</small>
+            <small class="reference-path">Caminho padrão: <code>data/jcr_2026.csv</code><br>Em uso: <span data-ref-active="jcr">data/jcr_2026.csv</span></small>
           </label>
           <label>Qualis de eventos <span class="status-dot" data-ref-status="events"></span>
             <input id="eventsFile" type="file" accept=".csv,text/csv">
             <small>Colunas: Siglas, Conferencia e Qualis.</small>
+            <small class="reference-path">Caminho padrão: <code>data/qualis_eventos.csv</code><br>Em uso: <span data-ref-active="events">data/qualis_eventos.csv</span></small>
           </label>
           <label>Pesos de artigos <span class="status-dot" data-ref-status="articleWeights"></span>
             <input id="articleWeightsFile" type="file" accept=".csv,text/csv">
             <small>TipoCAPES, TipoSJR, Pesos e Maximo.</small>
+            <small class="reference-path">Caminho padrão: <code>data/pesos_artigos.csv</code><br>Em uso: <span data-ref-active="articleWeights">data/pesos_artigos.csv</span></small>
           </label>
           <label>Pesos da produção geral <span class="status-dot" data-ref-status="generalWeights"></span>
             <input id="generalWeightsFile" type="file" accept=".csv,text/csv">
             <small>TIPOPRODUTO, PESOS e MAXIMO.</small>
+            <small class="reference-path">Caminho padrão: <code>data/pesos_producao_geral.csv</code><br>Em uso: <span data-ref-active="generalWeights">data/pesos_producao_geral.csv</span></small>
           </label>
           <label>Bolsistas de produtividade <span class="status-dot" data-ref-status="fellows"></span>
             <input id="fellowsFile" type="file" accept=".csv,text/csv">
             <small>NomeBolsista e IDLattes.</small>
+            <small class="reference-path">Caminho padrão: <code>data/bolsistas_produtividade.csv</code><br>Em uso: <span data-ref-active="fellows">data/bolsistas_produtividade.csv</span></small>
           </label>
         </div>
+
+        <section class="fellows-selector" aria-labelledby="fellowsSelectorTitle">
+          <div class="fellows-selector-heading">
+            <div>
+              <h4 id="fellowsSelectorTitle">Bolsistas de produtividade na pontuação</h4>
+              <p>Após escolher os currículos, marque os docentes que devem receber o item <strong>Produtividade CNPq</strong>. Os nomes encontrados na tabela padrão vêm pré-selecionados, mas podem ser incluídos ou removidos manualmente.</p>
+            </div>
+            <div class="fellows-actions">
+              <button id="refreshFellowsBtn" class="btn btn-secondary btn-small" type="button">Ler docentes dos currículos</button>
+              <button id="fellowSelectAllBtn" class="btn btn-secondary btn-small" type="button" disabled>Selecionar todos</button>
+              <button id="fellowClearAllBtn" class="btn btn-secondary btn-small" type="button" disabled>Limpar seleção</button>
+            </div>
+          </div>
+          <div id="fellowSelectionStatus" class="fellows-status">Escolha os currículos para montar a lista de docentes.</div>
+          <div id="fellowSelectionTable" class="fellows-table-wrap"></div>
+        </section>
       </div>
     </section>
 
