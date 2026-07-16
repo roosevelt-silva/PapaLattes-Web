@@ -3,6 +3,7 @@
 const DEFAULT_FILES = {
   qualis: 'data/qualis_periodicos.csv',
   sjr: 'data/sjr.csv',
+  jcr: 'data/jcr_2026.csv',
   events: 'data/qualis_eventos.csv',
   articleWeights: 'data/pesos_artigos.csv',
   generalWeights: 'data/pesos_producao_geral.csv',
@@ -16,6 +17,8 @@ const state = {
   activeTab: 'total',
   selectedResearcher: 'ALL',
   profileResearcher: '',
+  profileView: 'INDIVIDUAL',
+  downloadUrl: '',
   logLines: []
 };
 
@@ -25,13 +28,20 @@ const els = {};
 function cacheElements() {
   [
     'yearStart', 'yearEnd', 'scoreMode', 'lattesFiles', 'dropZone',
-    'fileSummary', 'toggleRefs', 'referencePanel', 'qualisFile', 'sjrFile',
+    'fileSummary', 'toggleRefs', 'referencePanel', 'qualisFile', 'sjrFile', 'jcrFile',
     'eventsFile', 'articleWeightsFile', 'generalWeightsFile', 'fellowsFile',
-    'processBtn', 'downloadBtn', 'progressSection', 'progressLabel',
+    'processBtn', 'downloadLink', 'downloadLinkResults', 'progressSection', 'progressLabel',
     'progressPercent', 'progressBar', 'logBox', 'resultsSection', 'summaryCards',
-    'resultsMeta', 'rankingChart', 'annualChart', 'productionMixChart', 'qualityChart',
+    'resultsMeta', 'rankingChart', 'annualChart', 'productionMixChart',
+    'qualityCapesChart', 'qualityMetricPanel', 'qualityMetricTitle', 'qualityMetricDescription', 'qualityMetricChart',
+    'qualityJcrQuartilePanel', 'qualityJcrQuartileChart',
     'scatterChart', 'concentrationPanel', 'journalsChart', 'collaborationChart',
-    'researcherProfile', 'profileResearcher', 'tabControls', 'tableContainer'
+    'researcherProfile', 'profileResearcher', 'profileResearcherLabel', 'profileAnalysisMode',
+    'individualProfilePanels', 'comparisonProfilePanels', 'profileAnnualChart', 'profileProductionMixChart',
+    'profileQualityCapesChart', 'profileQualityMetricPanel', 'profileQualityMetricTitle', 'profileQualityMetricChart',
+    'profileTopArticlesChart', 'comparisonSummary', 'top10ScoreChart', 'top10AverageChart',
+    'top10CapesChart', 'top10MetricPanel', 'top10MetricTitle', 'top10MetricChart',
+    'tabControls', 'tableContainer'
   ].forEach((id) => { els[id] = $(id); });
 }
 
@@ -95,6 +105,16 @@ function formatNumber(value, decimals = 2) {
     maximumFractionDigits: decimals,
     minimumFractionDigits: Number.isInteger(number) ? 0 : Math.min(1, decimals)
   }).format(number);
+}
+
+function scoreModeLabel(value) {
+  return {
+    MELHOR: 'MELHOR — CAPES + SJR',
+    MELHOR_JCR: 'MELHOR — CAPES + JCR',
+    CAPES: 'Somente CAPES',
+    SJR: 'Somente SJR',
+    JCR: 'Somente JCR'
+  }[value] || String(value ?? '');
 }
 
 function setProgress(percent, label) {
@@ -464,7 +484,7 @@ function quantileType7(sorted, probability) {
 
 async function prepareReferences() {
   log('Carregando tabelas de referência...');
-  const keys = ['articleWeights', 'generalWeights', 'qualis', 'events', 'fellows', 'sjr'];
+  const keys = ['articleWeights', 'generalWeights', 'qualis', 'events', 'fellows', 'sjr', 'jcr'];
   const texts = {};
   for (let i = 0; i < keys.length; i += 1) {
     const key = keys[i];
@@ -534,7 +554,7 @@ async function prepareReferences() {
   const fellowsId = findColumn(fellowsParsed.headers, ['IDLattes', 'ID Lattes', 'NumeroIdentificador'], false);
   const fellowsSet = new Set(fellowsId ? fellowsParsed.rows.map((row) => String(row[fellowsId] ?? '').replace(/\D/g, '')).filter(Boolean) : []);
 
-  setProgress(50, 'Lendo e indexando a tabela SJR...');
+  setProgress(48, 'Lendo e indexando a tabela SJR...');
   const sjrParsed = parseCsv(texts.sjr);
   const sjrType = findColumn(sjrParsed.headers, ['Type', 'Tipo']);
   const sjrIssn = findColumn(sjrParsed.headers, ['Issn', 'ISSN']);
@@ -553,17 +573,63 @@ async function prepareReferences() {
   sjrValues.sort((a, b) => a - b);
 
   const intervalCount = articleWeights.length - 1;
-  const bounds = [0];
-  for (let k = 1; k <= intervalCount; k += 1) bounds.push(quantileType7(sjrValues, k / intervalCount));
-  const percentiles = articleWeights.slice(1).map((row, index) => ({
+  const sjrBounds = [0];
+  for (let k = 1; k <= intervalCount; k += 1) sjrBounds.push(quantileType7(sjrValues, k / intervalCount));
+  const sjrPercentiles = articleWeights.slice(1).map((row, index) => ({
     TipoSJR: row.sjr,
-    SJRmin: bounds[index],
-    SJRmax: bounds[index + 1],
+    SJRmin: sjrBounds[index],
+    SJRmax: sjrBounds[index + 1],
     Pesos: row.weight
   }));
 
-  log(`Referências prontas: ${qualisMap.size.toLocaleString('pt-BR')} ISSNs CAPES e ${sjrMap.size.toLocaleString('pt-BR')} ISSNs SJR.`);
-  return { articleWeights, generalWeights, generalMap, qualisMap, eventList, fellowsSet, sjrMap, sjrValues, percentiles };
+  setProgress(54, 'Lendo e indexando a tabela JCR...');
+  const jcrParsed = parseCsv(texts.jcr);
+  const jcrIssn = findColumn(jcrParsed.headers, ['ISSN']);
+  const jcrEissn = findColumn(jcrParsed.headers, ['eISSN', 'EISSN', 'ISSNOnline'], false);
+  const jcrJif = findColumn(jcrParsed.headers, ['JIF_2025', 'JIF', 'JCR', 'FatorImpacto', 'ImpactFactor']);
+  const jcrQuartile = findColumn(jcrParsed.headers, ['QuartilMelhor', 'Quartil', 'JCRQuartil'], false);
+  const jcrCategories = findColumn(jcrParsed.headers, ['Categorias', 'Categoria', 'WosCategorias'], false);
+  const jcrTitle = findColumn(jcrParsed.headers, ['Titulo', 'Título', 'Title', 'Journal'], false);
+  const jcrMap = new Map();
+  const jcrValues = [];
+  const jcrSeenJournals = new Set();
+  for (const row of jcrParsed.rows) {
+    const value = parseNumber(row[jcrJif], -99);
+    const identifiers = [row[jcrIssn], jcrEissn ? row[jcrEissn] : '']
+      .map(normalizeIssn).filter((value, index, array) => value && array.indexOf(value) === index);
+    if (!identifiers.length) continue;
+    const record = {
+      value,
+      quartile: jcrQuartile ? String(row[jcrQuartile] ?? '').trim() || 'N/A' : 'N/A',
+      categories: jcrCategories ? String(row[jcrCategories] ?? '').trim() : '',
+      title: jcrTitle ? String(row[jcrTitle] ?? '').trim() : ''
+    };
+    identifiers.forEach((issn) => {
+      const previous = jcrMap.get(issn);
+      if (!previous || value > previous.value) jcrMap.set(issn, record);
+    });
+    const journalKey = identifiers.sort().join('|');
+    if (value >= 0 && !jcrSeenJournals.has(journalKey)) {
+      jcrValues.push(value);
+      jcrSeenJournals.add(journalKey);
+    }
+  }
+  jcrValues.sort((a, b) => a - b);
+  const jcrBounds = [0];
+  for (let k = 1; k <= intervalCount; k += 1) jcrBounds.push(quantileType7(jcrValues, k / intervalCount));
+  const jcrPercentiles = articleWeights.slice(1).map((row, index) => ({
+    TipoJCR: row.sjr,
+    JCRmin: jcrBounds[index],
+    JCRmax: jcrBounds[index + 1],
+    Pesos: row.weight
+  }));
+
+  log(`Referências prontas: ${qualisMap.size.toLocaleString('pt-BR')} ISSNs CAPES, ${sjrMap.size.toLocaleString('pt-BR')} ISSNs SJR e ${jcrMap.size.toLocaleString('pt-BR')} identificadores JCR.`);
+  return {
+    articleWeights, generalWeights, generalMap, qualisMap, eventList, fellowsSet,
+    sjrMap, sjrValues, percentiles: sjrPercentiles, sjrPercentiles,
+    jcrMap, jcrValues, jcrPercentiles
+  };
 }
 
 // -----------------------------------------------------------------------------
@@ -655,12 +721,21 @@ function noIndexWeight(refs, doi) {
 }
 
 function sjrBand(refs, value) {
-  for (let i = 0; i < refs.percentiles.length; i += 1) {
-    const row = refs.percentiles[i];
-    const isLast = i === refs.percentiles.length - 1;
+  for (let i = 0; i < refs.sjrPercentiles.length; i += 1) {
+    const row = refs.sjrPercentiles[i];
+    const isLast = i === refs.sjrPercentiles.length - 1;
     if (value >= row.SJRmin && (value < row.SJRmax || (isLast && value <= row.SJRmax))) return row;
   }
-  return refs.percentiles.at(-1) || { TipoSJR: 'SemSJR', Pesos: refs.articleWeights.at(-1).weight };
+  return refs.sjrPercentiles.at(-1) || { TipoSJR: 'SemSJR', Pesos: refs.articleWeights.at(-1).weight };
+}
+
+function jcrBand(refs, value) {
+  for (let i = 0; i < refs.jcrPercentiles.length; i += 1) {
+    const row = refs.jcrPercentiles[i];
+    const isLast = i === refs.jcrPercentiles.length - 1;
+    if (value >= row.JCRmin && (value < row.JCRmax || (isLast && value <= row.JCRmax))) return row;
+  }
+  return refs.jcrPercentiles.at(-1) || { TipoJCR: 'SemJCR', Pesos: refs.articleWeights.at(-1).weight };
 }
 
 function scoreArticles(doc, researcherName, start, end, scoreMode, refs) {
@@ -680,11 +755,21 @@ function scoreArticles(doc, researcherName, start, end, scoreMode, refs) {
     const sjrValue = refs.sjrMap.has(issn) ? refs.sjrMap.get(issn) : -99;
     const band = sjrValue >= 0 ? sjrBand(refs, sjrValue) : null;
     const sjrPoints = band ? band.Pesos : noIndexWeight(refs, doi);
+
+    const jcrRecord = refs.jcrMap.get(issn) || null;
+    const jcrValue = jcrRecord && jcrRecord.value >= 0 ? jcrRecord.value : -99;
+    const jcrMetricBand = jcrValue >= 0 ? jcrBand(refs, jcrValue) : null;
+    const jcrPoints = jcrMetricBand ? jcrMetricBand.Pesos : noIndexWeight(refs, doi);
+
     let rawWeight;
     let source;
     if (scoreMode === 'CAPES') { rawWeight = capesWeight; source = 'CAPES'; }
     else if (scoreMode === 'SJR') { rawWeight = sjrPoints; source = 'SJR'; }
-    else if (sjrPoints > capesWeight) { rawWeight = sjrPoints; source = 'SJR'; }
+    else if (scoreMode === 'JCR') { rawWeight = jcrPoints; source = 'JCR'; }
+    else if (scoreMode === 'MELHOR_JCR') {
+      if (jcrPoints > capesWeight) { rawWeight = jcrPoints; source = 'JCR'; }
+      else { rawWeight = capesWeight; source = 'CAPES'; }
+    } else if (sjrPoints > capesWeight) { rawWeight = sjrPoints; source = 'SJR'; }
     else { rawWeight = capesWeight; source = 'CAPES'; }
 
     const authors = allByTag(article, 'AUTORES')
@@ -700,6 +785,10 @@ function scoreArticles(doc, researcherName, start, end, scoreMode, refs) {
       QualisCAPES: qualis,
       SJR: sjrValue >= 0 ? sjrValue : 'SemSJR',
       FaixaSJR: band?.TipoSJR || 'SemSJR',
+      JCR: jcrValue >= 0 ? jcrValue : 'SemJCR',
+      FaixaJCR: jcrMetricBand?.TipoJCR || 'SemJCR',
+      QuartilJCR: jcrRecord?.quartile || 'N/A',
+      CategoriasJCR: jcrRecord?.categories || '',
       Ano: Number(basic.getAttribute('ANO-DO-ARTIGO')),
       PesoBruto: rawWeight,
       Peso: awarded,
@@ -1019,6 +1108,10 @@ function buildAnalytics(researchers, refs, config) {
     QualisCAPES: row.QualisCAPES,
     SJR: row.SJR,
     FaixaSJR: row.FaixaSJR,
+    JCR: row.JCR,
+    FaixaJCR: row.FaixaJCR,
+    QuartilJCR: row.QuartilJCR,
+    CategoriasJCR: row.CategoriasJCR,
     PesoReferencia: row._pesoMax,
     DocentesUFJ: [...row._docentes].sort((a, b) => a.localeCompare(b, 'pt-BR')).join('; '),
     NumeroDocentesUFJ: row._docentes.size,
@@ -1041,26 +1134,43 @@ function buildAnalytics(researchers, refs, config) {
   }
 
   const capesOrder = ['A1', 'A2', 'A3', 'A4', 'B1', 'B2', 'B3', 'B4', 'C', 'ArtigoCOMDOI', 'ArtigoSEMDOI', 'SemQualis'];
+  const metricOrder = ['ArtigoP7', 'ArtigoP6', 'ArtigoP5', 'ArtigoP4', 'ArtigoP3', 'ArtigoP2', 'ArtigoP1', 'ArtigoCOMDOI', 'SemSJR', 'SemJCR'];
+  const quartileOrder = ['Q1', 'Q2', 'Q3', 'Q4', 'N/A'];
   const capesCounts = new Map();
   const sjrCounts = new Map();
+  const jcrCounts = new Map();
+  const jcrQuartileCounts = new Map();
   for (const article of uniqueArticles) {
     capesCounts.set(article.QualisCAPES || 'SemQualis', (capesCounts.get(article.QualisCAPES || 'SemQualis') || 0) + 1);
     sjrCounts.set(article.FaixaSJR || 'SemSJR', (sjrCounts.get(article.FaixaSJR || 'SemSJR') || 0) + 1);
+    jcrCounts.set(article.FaixaJCR || 'SemJCR', (jcrCounts.get(article.FaixaJCR || 'SemJCR') || 0) + 1);
+    jcrQuartileCounts.set(article.QuartilJCR || 'N/A', (jcrQuartileCounts.get(article.QuartilJCR || 'N/A') || 0) + 1);
   }
   const capesQualityRows = [...capesCounts].map(([Estrato, Artigos]) => ({ Sistema: 'CAPES', Estrato, Artigos }))
     .sort((a, b) => (capesOrder.indexOf(a.Estrato) < 0 ? 99 : capesOrder.indexOf(a.Estrato)) - (capesOrder.indexOf(b.Estrato) < 0 ? 99 : capesOrder.indexOf(b.Estrato)));
   const sjrQualityRows = [...sjrCounts].map(([Estrato, Artigos]) => ({ Sistema: 'SJR', Estrato, Artigos }))
-    .sort((a, b) => b.Artigos - a.Artigos || a.Estrato.localeCompare(b.Estrato, 'pt-BR'));
-  const qualityRows = [...capesQualityRows, ...sjrQualityRows];
+    .sort((a, b) => (metricOrder.indexOf(a.Estrato) < 0 ? 99 : metricOrder.indexOf(a.Estrato)) - (metricOrder.indexOf(b.Estrato) < 0 ? 99 : metricOrder.indexOf(b.Estrato)));
+  const jcrQualityRows = [...jcrCounts].map(([Estrato, Artigos]) => ({ Sistema: 'JCR', Estrato, Artigos }))
+    .sort((a, b) => (metricOrder.indexOf(a.Estrato) < 0 ? 99 : metricOrder.indexOf(a.Estrato)) - (metricOrder.indexOf(b.Estrato) < 0 ? 99 : metricOrder.indexOf(b.Estrato)));
+  const jcrQuartileRows = [...jcrQuartileCounts].map(([Estrato, Artigos]) => ({ Sistema: 'JCR Quartil', Estrato, Artigos }))
+    .sort((a, b) => (quartileOrder.indexOf(a.Estrato) < 0 ? 99 : quartileOrder.indexOf(a.Estrato)) - (quartileOrder.indexOf(b.Estrato) < 0 ? 99 : quartileOrder.indexOf(b.Estrato)));
+  const qualityRows = [...capesQualityRows, ...sjrQualityRows, ...jcrQualityRows, ...jcrQuartileRows];
 
   const journalMap = new Map();
   for (const article of uniqueArticles) {
     const key = `${normalizeIssn(article.ISSN)}|${normalizeText(article.Periodico)}`;
-    if (!journalMap.has(key)) journalMap.set(key, { Periodico: article.Periodico || 'Não informado', ISSN: article.ISSN, ArtigosUnicos: 0, PontuacaoReferencia: 0, _sjr: [], _docentes: new Set() });
+    if (!journalMap.has(key)) journalMap.set(key, {
+      Periodico: article.Periodico || 'Não informado', ISSN: article.ISSN,
+      ArtigosUnicos: 0, PontuacaoReferencia: 0, _sjr: [], _jcr: [],
+      _quartisJcr: new Set(), _categoriasJcr: new Set(), _docentes: new Set()
+    });
     const current = journalMap.get(key);
     current.ArtigosUnicos += 1;
     current.PontuacaoReferencia += Number(article.PesoReferencia || 0);
     if (typeof article.SJR === 'number') current._sjr.push(article.SJR);
+    if (typeof article.JCR === 'number') current._jcr.push(article.JCR);
+    if (article.QuartilJCR && article.QuartilJCR !== 'N/A') current._quartisJcr.add(article.QuartilJCR);
+    String(article.CategoriasJCR || '').split('|').map((value) => value.trim()).filter(Boolean).forEach((value) => current._categoriasJcr.add(value));
     String(article.DocentesUFJ).split(';').map((name) => name.trim()).filter(Boolean).forEach((name) => current._docentes.add(name));
   }
   const journalRows = [...journalMap.values()].map((row) => ({
@@ -1069,6 +1179,9 @@ function buildAnalytics(researchers, refs, config) {
     ArtigosUnicos: row.ArtigosUnicos,
     PontuacaoReferencia: row.PontuacaoReferencia,
     SJRMedio: row._sjr.length ? row._sjr.reduce((sum, value) => sum + value, 0) / row._sjr.length : '',
+    JIFMedio: row._jcr.length ? row._jcr.reduce((sum, value) => sum + value, 0) / row._jcr.length : '',
+    MelhorQuartilJCR: [...row._quartisJcr].sort((a, b) => Number(a.replace('Q', '')) - Number(b.replace('Q', '')))[0] || 'N/A',
+    CategoriasJCR: [...row._categoriasJcr].sort((a, b) => a.localeCompare(b, 'pt-BR')).join(' | '),
     NumeroDocentes: row._docentes.size,
     Docentes: [...row._docentes].sort((a, b) => a.localeCompare(b, 'pt-BR')).join('; ')
   })).sort((a, b) => b.ArtigosUnicos - a.ArtigosUnicos || b.PontuacaoReferencia - a.PontuacaoReferencia);
@@ -1095,6 +1208,7 @@ function buildAnalytics(researchers, refs, config) {
   const doiCount = uniqueArticles.filter((row) => String(row.DOI || '').trim()).length;
   const capesIndexed = uniqueArticles.filter((row) => row.QualisCAPES && row.QualisCAPES !== 'SemQualis').length;
   const sjrIndexed = uniqueArticles.filter((row) => typeof row.SJR === 'number').length;
+  const jcrIndexed = uniqueArticles.filter((row) => typeof row.JCR === 'number').length;
 
   const orientationCompletedFields = ['OrientMestConc', 'CoOrientMestConc', 'OrientDoutConc', 'CoOrientDoutConc', 'OrientPosDoutConc', 'OrientICConc', 'OrientTCCConc', 'OrientMonConc'];
   const orientationOngoingFields = ['OrientICAnd', 'OrientTCCAnd', 'OrientMonAnd', 'OrientMestAnd', 'CoOrientMestAnd', 'OrientDoutAnd', 'CoOrientDoutAnd', 'OrientPosDoutAnd'];
@@ -1108,16 +1222,20 @@ function buildAnalytics(researchers, refs, config) {
     const withDoi = articles.filter((row) => String(row.DOI || '').trim()).length;
     const withCapes = articles.filter((row) => row.QualisCAPES && row.QualisCAPES !== 'SemQualis').length;
     const withSjr = articles.filter((row) => typeof row.SJR === 'number').length;
+    const withJcr = articles.filter((row) => typeof row.JCR === 'number').length;
     const qualisA = articles.filter((row) => /^A[1-4]$/i.test(row.QualisCAPES)).length;
+    const jcrQ1 = articles.filter((row) => row.QuartilJCR === 'Q1').length;
     return {
       Nomes: researcher.name,
       TotalPontos: researcher.total,
       Artigos: articles.length,
       PontosPorArtigo: articles.length ? researcher.points.Artigos / articles.length : 0,
       ArtigosQualisA: qualisA,
+      ArtigosJCRQ1: jcrQ1,
       CoberturaDOI_pct: percentage(withDoi, articles.length),
       CoberturaCAPES_pct: percentage(withCapes, articles.length),
       CoberturaSJR_pct: percentage(withSjr, articles.length),
+      CoberturaJCR_pct: percentage(withJcr, articles.length),
       Livros: researcher.counts.Livros || 0,
       Capitulos: researcher.counts.CapLivros || 0,
       OrientacoesConcluidas: sumFields(researcher.counts, orientationCompletedFields),
@@ -1142,7 +1260,8 @@ function buildAnalytics(researchers, refs, config) {
   })).filter((row) => row.Pontuacao > 0).sort((a, b) => b.Pontuacao - a.Pontuacao);
 
   return {
-    articleParticipations, uniqueArticles, annualRows, qualityRows, capesQualityRows, sjrQualityRows,
+    articleParticipations, uniqueArticles, annualRows, qualityRows,
+    capesQualityRows, sjrQualityRows, jcrQualityRows, jcrQuartileRows,
     journalRows, collaborationRows, indicatorRows, productQuantityRows, productPointsRows,
     summary: {
       grandPoints,
@@ -1153,6 +1272,7 @@ function buildAnalytics(researchers, refs, config) {
       doiCoverage: percentage(doiCount, uniqueArticles.length),
       capesCoverage: percentage(capesIndexed, uniqueArticles.length),
       sjrCoverage: percentage(sjrIndexed, uniqueArticles.length),
+      jcrCoverage: percentage(jcrIndexed, uniqueArticles.length),
       uniqueArticleCount: uniqueArticles.length,
       collaborationArticleCount: uniqueArticles.filter((row) => row.NumeroDocentesUFJ > 1).length,
       collaborationPairCount: collaborationRows.length
@@ -1170,7 +1290,14 @@ async function processAll() {
   const config = { start, end, scoreMode: els.scoreMode.value, ruleVersion: '1.2.1 corrigida' };
   resetProgress();
   els.processBtn.disabled = true;
-  els.downloadBtn.disabled = true;
+  if (state.downloadUrl) {
+    URL.revokeObjectURL(state.downloadUrl);
+    state.downloadUrl = '';
+  }
+  [els.downloadLink, els.downloadLinkResults].forEach((link) => {
+    link.classList.add('hidden');
+    link.removeAttribute('href');
+  });
   els.resultsSection.classList.add('hidden');
   log(`Iniciando análise corrigida de ${files.length} arquivo(s) selecionado(s).`);
 
@@ -1216,14 +1343,22 @@ async function processAll() {
 
     setProgress(90, 'Construindo indicadores e análises...');
     const analytics = buildAnalytics(researchers, refs, config);
-    state.results = { config, refs, researchers, columns, quantityRows, pointsRows, totalRows, percentiles: refs.percentiles, analytics, errors };
+    state.results = {
+      config, refs, researchers, columns, quantityRows, pointsRows, totalRows,
+      percentiles: refs.sjrPercentiles, sjrPercentiles: refs.sjrPercentiles,
+      jcrPercentiles: refs.jcrPercentiles, analytics, errors
+    };
     state.activeTab = 'total';
     state.selectedResearcher = 'ALL';
     state.profileResearcher = totalRows[0]?.Nomes || researchers[0].name;
-    setProgress(100, 'Processamento concluído');
-    log(`Processamento concluído: ${researchers.length} currículo(s), ${analytics.summary.uniqueArticleCount} artigo(s) único(s) e ${formatNumber(analytics.summary.grandPoints)} pontos.`);
+    state.profileView = 'INDIVIDUAL';
     renderResults();
-    els.downloadBtn.disabled = false;
+    setProgress(96, 'Preparando o pacote para download...');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    prepareDownloadLink();
+    setProgress(100, 'Processamento concluído — download disponível');
+    log(`Processamento concluído: ${researchers.length} currículo(s), ${analytics.summary.uniqueArticleCount} artigo(s) único(s) e ${formatNumber(analytics.summary.grandPoints)} pontos.`);
+    log('O link para baixar todos os resultados já está disponível.');
   } finally {
     els.processBtn.disabled = false;
   }
@@ -1244,14 +1379,15 @@ function renderResults() {
     ['Participações em artigos', totalArticles, 'soma dos currículos'],
     ['Artigos únicos', summary.uniqueArticleCount, 'sem duplicar coautorias internas'],
     ['Pontuação acumulada', formatNumber(summary.grandPoints), `mediana: ${formatNumber(summary.medianPoints)}`],
-    ['Cobertura de DOI', `${formatNumber(summary.doiCoverage, 1)}%`, `CAPES: ${formatNumber(summary.capesCoverage, 1)}%`],
+    ['Cobertura de DOI', `${formatNumber(summary.doiCoverage, 1)}%`, `CAPES: ${formatNumber(summary.capesCoverage, 1)}% · SJR: ${formatNumber(summary.sjrCoverage, 1)}% · JCR: ${formatNumber(summary.jcrCoverage, 1)}%`],
     ['Maior pontuação', top ? formatNumber(top.TotalPontos) : '—', top?.Nomes || '—']
   ].map(([label, value, note]) => `<div class="summary-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small></div>`).join('');
 
-  els.resultsMeta.textContent = `${results.config.start}–${results.config.end} · ${results.config.scoreMode} · regras corrigidas 1.2.1`;
+  els.resultsMeta.textContent = `${results.config.start}–${results.config.end} · ${scoreModeLabel(results.config.scoreMode)} · regras corrigidas 1.2.1`;
   renderRanking(results.totalRows);
   populateProfileSelect();
   renderDashboard();
+  renderProfileSection();
   els.resultsSection.classList.remove('hidden');
   document.querySelectorAll('.tab').forEach((button) => button.classList.toggle('active', button.dataset.tab === state.activeTab));
   renderActiveTab();
@@ -1300,7 +1436,7 @@ function horizontalBars(container, rows, labelKey, valueKey, maxItems = 10, form
   container.innerHTML = `<div class="bar-list">${selected.map((row) => `
     <div class="mini-bar-row">
       <div class="mini-bar-label" title="${escapeHtml(row[labelKey])}">${escapeHtml(row[labelKey])}</div>
-      <div class="mini-bar-track"><div class="mini-bar-fill" style="width:${Math.max(1, (Number(row[valueKey]) / max) * 100)}%"></div></div>
+      <div class="mini-bar-track"><div class="mini-bar-fill" style="width:${Number(row[valueKey]) > 0 ? Math.max(1, (Number(row[valueKey]) / max) * 100) : 0}%"></div></div>
       <div class="mini-bar-value">${escapeHtml(formatter(row[valueKey]))}</div>
     </div>`).join('')}</div>`;
 }
@@ -1353,9 +1489,103 @@ function renderCoveragePanel(container, summary) {
   const coverage = [
     ['Artigos com DOI', summary.doiCoverage],
     ['Artigos indexados na CAPES', summary.capesCoverage],
-    ['Artigos indexados no SJR', summary.sjrCoverage]
+    ['Artigos indexados no SJR', summary.sjrCoverage],
+    ['Artigos indexados no JCR', summary.jcrCoverage]
   ];
   container.innerHTML = `<div class="metric-grid">${metrics.map(([label, value]) => `<div class="metric-tile"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>${coverage.map(([label, value]) => `<div class="coverage-row"><div class="coverage-label"><span>${escapeHtml(label)}</span><strong>${formatNumber(value, 1)}%</strong></div><div class="coverage-track"><div class="coverage-fill" style="width:${Math.max(0, Math.min(100, value))}%"></div></div></div>`).join('')}`;
+}
+
+const QUALITY_ORDERS = {
+  CAPES: ['A1', 'A2', 'A3', 'A4', 'B1', 'B2', 'B3', 'B4', 'C', 'SemQualis'],
+  SJR: ['ArtigoP7', 'ArtigoP6', 'ArtigoP5', 'ArtigoP4', 'ArtigoP3', 'ArtigoP2', 'ArtigoP1', 'SemSJR'],
+  JCR: ['ArtigoP7', 'ArtigoP6', 'ArtigoP5', 'ArtigoP4', 'ArtigoP3', 'ArtigoP2', 'ArtigoP1', 'SemJCR'],
+  JCR_QUARTILE: ['Q1', 'Q2', 'Q3', 'Q4', 'N/A']
+};
+
+const STACK_COLORS = ['#082f63', '#1557a0', '#2f7cc1', '#62a9df', '#19704a', '#45a778', '#d58b1d', '#edb84a', '#845ec2', '#b9c2cf'];
+
+function qualityDisplayLabel(value) {
+  const labels = {
+    ArtigoP7: 'P7', ArtigoP6: 'P6', ArtigoP5: 'P5', ArtigoP4: 'P4',
+    ArtigoP3: 'P3', ArtigoP2: 'P2', ArtigoP1: 'P1',
+    SemQualis: 'Sem Qualis', SemSJR: 'Sem SJR', SemJCR: 'Sem JCR', 'N/A': 'Sem quartil'
+  };
+  return labels[value] || value;
+}
+
+function metricSystemForMode(mode) {
+  if (mode === 'SJR' || mode === 'MELHOR') return 'SJR';
+  if (mode === 'JCR' || mode === 'MELHOR_JCR') return 'JCR';
+  return null;
+}
+
+function qualityRowsForArticles(articles, system) {
+  const order = QUALITY_ORDERS[system] || [];
+  const key = system === 'CAPES' ? 'QualisCAPES'
+    : system === 'SJR' ? 'FaixaSJR'
+      : system === 'JCR' ? 'FaixaJCR' : 'QuartilJCR';
+  const fallback = system === 'CAPES' ? 'SemQualis'
+    : system === 'SJR' ? 'SemSJR'
+      : system === 'JCR' ? 'SemJCR' : 'N/A';
+  const counts = new Map(order.map((item) => [item, 0]));
+  for (const article of articles || []) {
+    const value = String(article[key] || fallback).trim() || fallback;
+    counts.set(value, (counts.get(value) || 0) + 1);
+  }
+  const extras = [...counts.keys()].filter((item) => !order.includes(item));
+  return [...order, ...extras].map((Estrato) => ({ Estrato, Rotulo: qualityDisplayLabel(Estrato), Artigos: counts.get(Estrato) || 0 }));
+}
+
+function renderQualityHistogram(container, rows) {
+  horizontalBars(container, rows, 'Rotulo', 'Artigos', rows.length, (value) => formatNumber(value, 0));
+}
+
+function topArticlesForResearcher(researcher, limit = 10) {
+  return [...(researcher?.articleRows || [])]
+    .sort((a, b) => Number(b.PesoBruto || 0) - Number(a.PesoBruto || 0)
+      || Number(b.JCR || -1) - Number(a.JCR || -1)
+      || Number(b.SJR || -1) - Number(a.SJR || -1)
+      || Number(b.Ano || 0) - Number(a.Ano || 0))
+    .slice(0, limit);
+}
+
+function countQualitySegments(articles, system) {
+  return Object.fromEntries(qualityRowsForArticles(articles, system).map((row) => [row.Estrato, row.Artigos]));
+}
+
+function stackedHistogram(container, rows, categories) {
+  if (!rows.length) { container.innerHTML = '<div class="chart-empty">Sem dados para a comparação.</div>'; return; }
+  const totals = rows.map((row) => categories.reduce((sum, category) => sum + Number(row.segments[category] || 0), 0));
+  const maxTotal = Math.max(...totals, 1);
+  const legend = `<div class="stacked-legend">${categories.map((category, index) => `<span class="legend-item"><i class="legend-swatch" style="background:${STACK_COLORS[index % STACK_COLORS.length]}"></i>${escapeHtml(qualityDisplayLabel(category))}</span>`).join('')}</div>`;
+  const bars = rows.map((row, rowIndex) => {
+    const total = totals[rowIndex];
+    const segments = categories.map((category, index) => {
+      const value = Number(row.segments[category] || 0);
+      if (!value) return '';
+      const width = total ? value / maxTotal * 100 : 0;
+      return `<span class="stack-segment" style="width:${width}%;background:${STACK_COLORS[index % STACK_COLORS.length]}" title="${escapeHtml(row.Docente)} — ${escapeHtml(qualityDisplayLabel(category))}: ${value}"><b>${value}</b></span>`;
+    }).join('');
+    return `<div class="stacked-row"><div class="stacked-label" title="${escapeHtml(row.Docente)}">${escapeHtml(row.Docente)}</div><div class="stacked-track">${segments}</div><div class="stacked-total">${total}</div></div>`;
+  }).join('');
+  container.innerHTML = `${legend}<div class="stacked-list">${bars}</div>`;
+}
+
+function buildTop10Comparison() {
+  return state.results.researchers.map((researcher) => {
+    const articles = topArticlesForResearcher(researcher, 10);
+    const score = articles.reduce((sum, article) => sum + Number(article.PesoBruto || 0), 0);
+    return {
+      Docente: researcher.name,
+      Rotulo: `${researcher.name} (n=${articles.length})`,
+      Quantidade: articles.length,
+      PontuacaoTop10: score,
+      MediaTop10: articles.length ? score / articles.length : 0,
+      capesSegments: countQualitySegments(articles, 'CAPES'),
+      sjrSegments: countQualitySegments(articles, 'SJR'),
+      jcrSegments: countQualitySegments(articles, 'JCR')
+    };
+  });
 }
 
 function renderResearcherProfile(name) {
@@ -1365,16 +1595,73 @@ function renderResearcherProfile(name) {
   if (!row || !researcher) { els.researcherProfile.innerHTML = '<div class="chart-empty">Selecione um docente.</div>'; return; }
   const stats = [
     ['Pontuação total', formatNumber(row.TotalPontos)], ['Artigos', row.Artigos], ['Pontos por artigo', formatNumber(row.PontosPorArtigo)],
-    ['Artigos Qualis A', row.ArtigosQualisA], ['Livros + capítulos', row.Livros + row.Capitulos], ['Orientações concluídas', row.OrientacoesConcluidas],
-    ['Orientações em andamento', row.OrientacoesAndamento], ['Produção técnica/inovação', row.ProducaoTecnicaInovacao],
+    ['Artigos Qualis A', row.ArtigosQualisA], ['Artigos JCR Q1', row.ArtigosJCRQ1], ['Livros + capítulos', row.Livros + row.Capitulos],
+    ['Orientações concluídas', row.OrientacoesConcluidas], ['Orientações em andamento', row.OrientacoesAndamento],
+    ['Produção técnica/inovação', row.ProducaoTecnicaInovacao],
     ['Artigos em colaboração interna', row.ArtigosColaboracaoInterna], ['Parceiros internos', row.ParceirosInternos],
-    ['Cobertura DOI', `${formatNumber(row.CoberturaDOI_pct, 1)}%`], ['Cobertura SJR', `${formatNumber(row.CoberturaSJR_pct, 1)}%`]
+    ['Cobertura DOI', `${formatNumber(row.CoberturaDOI_pct, 1)}%`], ['Cobertura CAPES', `${formatNumber(row.CoberturaCAPES_pct, 1)}%`],
+    ['Cobertura SJR', `${formatNumber(row.CoberturaSJR_pct, 1)}%`], ['Cobertura JCR', `${formatNumber(row.CoberturaJCR_pct, 1)}%`]
   ];
+  els.researcherProfile.innerHTML = `<div class="profile-name-banner"><span>Docente selecionado</span><strong>${escapeHtml(name)}</strong></div><div class="profile-grid">${stats.map(([label, value]) => `<div class="profile-stat"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`;
+
+  lineChart(els.profileAnnualChart, researcher.yearly, [
+    { key: 'Artigos', label: 'Artigos' },
+    { key: 'OrientacoesConcluidas', label: 'Orientações concluídas' },
+    { key: 'ProducaoTecnicaInovacao', label: 'Produção técnica/inovação' }
+  ]);
+
   const categoryRows = Object.entries(researcher.points)
     .map(([key, value]) => ({ Categoria: PRODUCT_LABELS[key] || key, Pontuacao: Number(value) || 0 }))
     .filter((item) => item.Pontuacao > 0).sort((a, b) => b.Pontuacao - a.Pontuacao);
-  els.researcherProfile.innerHTML = `<div class="profile-grid">${stats.map(([label, value]) => `<div class="profile-stat"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div><div class="profile-bars" id="profileBars"></div>`;
-  horizontalBars($('profileBars'), categoryRows, 'Categoria', 'Pontuacao', 8);
+  horizontalBars(els.profileProductionMixChart, categoryRows, 'Categoria', 'Pontuacao', 10);
+  renderQualityHistogram(els.profileQualityCapesChart, qualityRowsForArticles(researcher.articleRows, 'CAPES'));
+
+  const metric = metricSystemForMode(results.config.scoreMode);
+  els.profileQualityMetricPanel.classList.toggle('hidden', !metric);
+  if (metric) {
+    els.profileQualityMetricTitle.textContent = `Qualidade individual por faixas ${metric}`;
+    renderQualityHistogram(els.profileQualityMetricChart, qualityRowsForArticles(researcher.articleRows, metric));
+  }
+
+  const topRows = topArticlesForResearcher(researcher, 10).map((article, index) => ({
+    Artigo: `${index + 1}. ${article.Titulo || article.Periodico || 'Artigo sem título'}`,
+    Peso: Number(article.PesoBruto || 0)
+  }));
+  horizontalBars(els.profileTopArticlesChart, topRows, 'Artigo', 'Peso', 10);
+}
+
+function renderTop10Comparison() {
+  const rows = buildTop10Comparison();
+  const scoreRows = [...rows].sort((a, b) => b.PontuacaoTop10 - a.PontuacaoTop10 || b.MediaTop10 - a.MediaTop10);
+  const averageRows = [...rows].sort((a, b) => b.MediaTop10 - a.MediaTop10 || b.PontuacaoTop10 - a.PontuacaoTop10);
+  horizontalBars(els.top10ScoreChart, scoreRows, 'Rotulo', 'PontuacaoTop10', rows.length);
+  horizontalBars(els.top10AverageChart, averageRows, 'Rotulo', 'MediaTop10', rows.length);
+
+  const capesRows = scoreRows.map((row) => ({ Docente: row.Docente, segments: row.capesSegments }));
+  stackedHistogram(els.top10CapesChart, capesRows, QUALITY_ORDERS.CAPES);
+
+  const metric = metricSystemForMode(state.results.config.scoreMode);
+  els.top10MetricPanel.classList.toggle('hidden', !metric);
+  if (metric) {
+    els.top10MetricTitle.textContent = `Faixas ${metric} entre os 10 melhores artigos`;
+    const metricRows = scoreRows.map((row) => ({ Docente: row.Docente, segments: metric === 'SJR' ? row.sjrSegments : row.jcrSegments }));
+    stackedHistogram(els.top10MetricChart, metricRows, QUALITY_ORDERS[metric]);
+  }
+
+  const sumWinner = scoreRows[0];
+  const meanWinner = averageRows[0];
+  els.comparisonSummary.innerHTML = `<div class="comparison-highlight"><span>Maior soma nos 10 melhores</span><strong>${escapeHtml(sumWinner?.Docente || '—')}</strong><small>${formatNumber(sumWinner?.PontuacaoTop10 || 0)} pontos em ${sumWinner?.Quantidade || 0} artigo(s)</small></div><div class="comparison-highlight"><span>Maior média entre os 10 melhores</span><strong>${escapeHtml(meanWinner?.Docente || '—')}</strong><small>${formatNumber(meanWinner?.MediaTop10 || 0)} pontos por artigo</small></div><div class="comparison-note">Os artigos são ordenados pelo <strong>peso bruto do modo selecionado</strong> (${escapeHtml(scoreModeLabel(state.results.config.scoreMode))}). Docentes com menos de 10 artigos são comparados com a quantidade disponível, indicada por <em>n</em>.</div>`;
+}
+
+function renderProfileSection() {
+  if (!state.results) return;
+  const comparison = state.profileView === 'TOP10';
+  els.profileAnalysisMode.value = state.profileView;
+  els.profileResearcherLabel.classList.toggle('hidden', comparison);
+  els.individualProfilePanels.classList.toggle('hidden', comparison);
+  els.comparisonProfilePanels.classList.toggle('hidden', !comparison);
+  if (comparison) renderTop10Comparison();
+  else renderResearcherProfile(state.profileResearcher);
 }
 
 function renderDashboard() {
@@ -1385,13 +1672,24 @@ function renderDashboard() {
     { key: 'ProducaoTecnicaInovacao', label: 'Produção técnica/inovação' }
   ]);
   horizontalBars(els.productionMixChart, analytics.productPointsRows, 'Categoria', 'Pontuacao', 9);
-  horizontalBars(els.qualityChart, analytics.capesQualityRows, 'Estrato', 'Artigos', 12, (value) => formatNumber(value, 0));
+
+  renderQualityHistogram(els.qualityCapesChart, qualityRowsForArticles(analytics.uniqueArticles, 'CAPES'));
+  const metric = metricSystemForMode(state.results.config.scoreMode);
+  els.qualityMetricPanel.classList.toggle('hidden', !metric);
+  if (metric) {
+    els.qualityMetricTitle.textContent = `Qualidade dos artigos por faixas ${metric}`;
+    els.qualityMetricDescription.textContent = `Quantidade de artigos únicos em cada estrato ${metric}.`;
+    renderQualityHistogram(els.qualityMetricChart, qualityRowsForArticles(analytics.uniqueArticles, metric));
+  }
+  const showJcrQuartile = metric === 'JCR';
+  els.qualityJcrQuartilePanel.classList.toggle('hidden', !showJcrQuartile);
+  if (showJcrQuartile) renderQualityHistogram(els.qualityJcrQuartileChart, qualityRowsForArticles(analytics.uniqueArticles, 'JCR_QUARTILE'));
+
   scatterChart(els.scatterChart, analytics.indicatorRows);
   renderCoveragePanel(els.concentrationPanel, analytics.summary);
   horizontalBars(els.journalsChart, analytics.journalRows, 'Periodico', 'ArtigosUnicos', 9, (value) => formatNumber(value, 0));
   const collaborationDisplay = analytics.collaborationRows.map((row) => ({ Par: `${row.Docente1} × ${row.Docente2}`, Artigos: row.ArtigosCompartilhados }));
   horizontalBars(els.collaborationChart, collaborationDisplay, 'Par', 'Artigos', 9, (value) => formatNumber(value, 0));
-  renderResearcherProfile(state.profileResearcher);
 }
 
 function researcherSelect() {
@@ -1407,17 +1705,18 @@ function renderActiveTab() {
   if (state.activeTab === 'total') renderTable(results.totalRows, ['Nomes', 'TotalPontos']);
   else if (state.activeTab === 'quantity') renderTable(results.quantityRows, results.columns);
   else if (state.activeTab === 'points') renderTable(results.pointsRows, results.columns);
-  else if (state.activeTab === 'indicators') renderTable(analytics.indicatorRows, ['Nomes', 'TotalPontos', 'Artigos', 'PontosPorArtigo', 'ArtigosQualisA', 'CoberturaDOI_pct', 'CoberturaCAPES_pct', 'CoberturaSJR_pct', 'Livros', 'Capitulos', 'OrientacoesConcluidas', 'OrientacoesAndamento', 'ProducaoTecnicaInovacao', 'ArtigosColaboracaoInterna', 'ParceirosInternos', 'BolsistaProdutividade']);
+  else if (state.activeTab === 'indicators') renderTable(analytics.indicatorRows, ['Nomes', 'TotalPontos', 'Artigos', 'PontosPorArtigo', 'ArtigosQualisA', 'ArtigosJCRQ1', 'CoberturaDOI_pct', 'CoberturaCAPES_pct', 'CoberturaSJR_pct', 'CoberturaJCR_pct', 'Livros', 'Capitulos', 'OrientacoesConcluidas', 'OrientacoesAndamento', 'ProducaoTecnicaInovacao', 'ArtigosColaboracaoInterna', 'ParceirosInternos', 'BolsistaProdutividade']);
   else if (state.activeTab === 'annual') renderTable(analytics.annualRows, ['Ano', 'Artigos', 'ArtigosUnicos', 'Livros', 'CapLivros', 'TrabCompleto', 'OrientacoesConcluidas', 'OrientacoesAndamento', 'Bancas', 'ProducaoTecnicaInovacao', 'PontuacaoArtigosUnicos']);
   else if (state.activeTab === 'quality') renderTable(analytics.qualityRows, ['Sistema', 'Estrato', 'Artigos']);
-  else if (state.activeTab === 'journals') renderTable(analytics.journalRows, ['Periodico', 'ISSN', 'ArtigosUnicos', 'PontuacaoReferencia', 'SJRMedio', 'NumeroDocentes', 'Docentes']);
+  else if (state.activeTab === 'journals') renderTable(analytics.journalRows, ['Periodico', 'ISSN', 'ArtigosUnicos', 'PontuacaoReferencia', 'SJRMedio', 'JIFMedio', 'MelhorQuartilJCR', 'CategoriasJCR', 'NumeroDocentes', 'Docentes']);
   else if (state.activeTab === 'collaborations') renderTable(analytics.collaborationRows, ['Docente1', 'Docente2', 'ArtigosCompartilhados', 'PontuacaoCompartilhada']);
-  else if (state.activeTab === 'uniqueArticles') renderTable(analytics.uniqueArticles, ['Ano', 'Titulo', 'Periodico', 'ISSN', 'DOI', 'QualisCAPES', 'SJR', 'FaixaSJR', 'PesoReferencia', 'NumeroDocentesUFJ', 'DocentesUFJ']);
-  else if (state.activeTab === 'percentiles') renderTable(results.percentiles, ['TipoSJR', 'SJRmin', 'SJRmax', 'Pesos']);
+  else if (state.activeTab === 'uniqueArticles') renderTable(analytics.uniqueArticles, ['Ano', 'Titulo', 'Periodico', 'ISSN', 'DOI', 'QualisCAPES', 'SJR', 'FaixaSJR', 'JCR', 'FaixaJCR', 'QuartilJCR', 'CategoriasJCR', 'PesoReferencia', 'NumeroDocentesUFJ', 'DocentesUFJ']);
+  else if (state.activeTab === 'percentiles') renderTable(results.sjrPercentiles, ['TipoSJR', 'SJRmin', 'SJRmax', 'Pesos']);
+  else if (state.activeTab === 'jcrPercentiles') renderTable(results.jcrPercentiles, ['TipoJCR', 'JCRmin', 'JCRmax', 'Pesos']);
   else if (state.activeTab === 'articles') {
     els.tabControls.innerHTML = researcherSelect();
     const rows = results.researchers.filter((row) => state.selectedResearcher === 'ALL' || row.name === state.selectedResearcher).flatMap((row) => row.articleRows);
-    renderTable(rows, ['Nome', 'Ano', 'Titulo', 'Periodico', 'ISSN', 'DOI', 'QualisCAPES', 'SJR', 'FaixaSJR', 'FontePontuacao', 'PesoBruto', 'Peso']);
+    renderTable(rows, ['Nome', 'Ano', 'Titulo', 'Periodico', 'ISSN', 'DOI', 'QualisCAPES', 'SJR', 'FaixaSJR', 'JCR', 'FaixaJCR', 'QuartilJCR', 'CategoriasJCR', 'FontePontuacao', 'PesoBruto', 'Peso']);
   } else if (state.activeTab === 'eventsDetail') {
     els.tabControls.innerHTML = researcherSelect();
     const rows = results.researchers.filter((row) => state.selectedResearcher === 'ALL' || row.name === state.selectedResearcher).flatMap((row) => row.eventRows.map((event) => ({ Nome: row.name, ...event })));
@@ -1504,9 +1803,14 @@ function makeReportHtml(results) {
   const cards = [
     ['Currículos', results.researchers.length], ['Artigos únicos', summary.uniqueArticleCount],
     ['Pontuação total', formatNumber(summary.grandPoints)], ['Cobertura DOI', `${formatNumber(summary.doiCoverage, 1)}%`],
-    ['Cobertura CAPES', `${formatNumber(summary.capesCoverage, 1)}%`], ['Gini', formatNumber(summary.gini, 3)]
+    ['Cobertura CAPES', `${formatNumber(summary.capesCoverage, 1)}%`],
+    ['Cobertura SJR', `${formatNumber(summary.sjrCoverage, 1)}%`],
+    ['Cobertura JCR', `${formatNumber(summary.jcrCoverage, 1)}%`],
+    ['Gini', formatNumber(summary.gini, 3)]
   ].map(([label, value]) => `<div class="card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('');
-  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Relatório PapaLattes Analítico</title><style>body{font-family:Arial,sans-serif;margin:28px;color:#172033}h1,h2{color:#0b3266}table{border-collapse:collapse;width:100%;margin:14px 0 30px;font-size:12px}th,td{border:1px solid #d9e1eb;padding:7px;text-align:left}th{background:#0b3266;color:#fff}tr:nth-child(even){background:#f5f8fb}.meta{color:#667085}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.card{border:1px solid #d9e1eb;border-radius:10px;padding:12px}.card span{display:block;color:#667085;font-size:12px}.card strong{display:block;color:#08244a;font-size:22px;margin-top:4px}@media(max-width:700px){.cards{grid-template-columns:1fr}}</style></head><body><h1>PapaLattes Web Analítico</h1><p class="meta">Período: ${results.config.start}–${results.config.end} | Pontuação: ${results.config.scoreMode} | Regras corrigidas 1.2.1 | Gerado em: ${new Date().toLocaleString('pt-BR')}</p><div class="cards">${cards}</div><h2>Pontuação total</h2>${table(results.totalRows, ['Nomes', 'TotalPontos'])}<h2>Indicadores por docente</h2>${table(analytics.indicatorRows, ['Nomes', 'TotalPontos', 'Artigos', 'PontosPorArtigo', 'ArtigosQualisA', 'CoberturaDOI_pct', 'CoberturaCAPES_pct', 'CoberturaSJR_pct', 'Livros', 'Capitulos', 'OrientacoesConcluidas', 'OrientacoesAndamento', 'ProducaoTecnicaInovacao', 'ArtigosColaboracaoInterna', 'ParceirosInternos'])}<h2>Produção anual</h2>${table(analytics.annualRows, ['Ano', 'Artigos', 'ArtigosUnicos', 'Livros', 'CapLivros', 'TrabCompleto', 'OrientacoesConcluidas', 'OrientacoesAndamento', 'Bancas', 'ProducaoTecnicaInovacao', 'PontuacaoArtigosUnicos'])}<h2>Qualidade dos artigos</h2>${table(analytics.qualityRows, ['Sistema', 'Estrato', 'Artigos'])}<h2>Periódicos mais frequentes</h2>${table(analytics.journalRows, ['Periodico', 'ISSN', 'ArtigosUnicos', 'PontuacaoReferencia', 'SJRMedio', 'NumeroDocentes', 'Docentes'], 100)}<h2>Colaborações internas</h2>${table(analytics.collaborationRows, ['Docente1', 'Docente2', 'ArtigosCompartilhados', 'PontuacaoCompartilhada'], 100)}<h2>Quantidade de produtos</h2>${table(results.quantityRows, results.columns)}<h2>Pontuação por produto</h2>${table(results.pointsRows, results.columns)}<h2>Percentis SJR</h2>${table(results.percentiles, ['TipoSJR', 'SJRmin', 'SJRmax', 'Pesos'])}</body></html>`;
+  const indicatorColumns = ['Nomes', 'TotalPontos', 'Artigos', 'PontosPorArtigo', 'ArtigosQualisA', 'ArtigosJCRQ1', 'CoberturaDOI_pct', 'CoberturaCAPES_pct', 'CoberturaSJR_pct', 'CoberturaJCR_pct', 'Livros', 'Capitulos', 'OrientacoesConcluidas', 'OrientacoesAndamento', 'ProducaoTecnicaInovacao', 'ArtigosColaboracaoInterna', 'ParceirosInternos'];
+  const journalColumns = ['Periodico', 'ISSN', 'ArtigosUnicos', 'PontuacaoReferencia', 'SJRMedio', 'JIFMedio', 'MelhorQuartilJCR', 'CategoriasJCR', 'NumeroDocentes', 'Docentes'];
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Relatório PapaLattes Analítico</title><style>body{font-family:Arial,sans-serif;margin:28px;color:#172033}h1,h2{color:#0b3266}table{border-collapse:collapse;width:100%;margin:14px 0 30px;font-size:12px}th,td{border:1px solid #d9e1eb;padding:7px;text-align:left}th{background:#0b3266;color:#fff}tr:nth-child(even){background:#f5f8fb}.meta{color:#667085}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.card{border:1px solid #d9e1eb;border-radius:10px;padding:12px}.card span{display:block;color:#667085;font-size:12px}.card strong{display:block;color:#08244a;font-size:22px;margin-top:4px}@media(max-width:700px){.cards{grid-template-columns:1fr}}</style></head><body><h1>PapaLattes Web Analítico</h1><p class="meta">Período: ${results.config.start}–${results.config.end} | Pontuação: ${scoreModeLabel(results.config.scoreMode)} | Regras corrigidas 1.2.1 | JCR 2026 (JIF 2025) | Gerado em: ${new Date().toLocaleString('pt-BR')}</p><div class="cards">${cards}</div><h2>Pontuação total</h2>${table(results.totalRows, ['Nomes', 'TotalPontos'])}<h2>Indicadores por docente</h2>${table(analytics.indicatorRows, indicatorColumns)}<h2>Produção anual</h2>${table(analytics.annualRows, ['Ano', 'Artigos', 'ArtigosUnicos', 'Livros', 'CapLivros', 'TrabCompleto', 'OrientacoesConcluidas', 'OrientacoesAndamento', 'Bancas', 'ProducaoTecnicaInovacao', 'PontuacaoArtigosUnicos'])}<h2>Qualidade dos artigos</h2>${table(analytics.qualityRows, ['Sistema', 'Estrato', 'Artigos'])}<h2>Periódicos mais frequentes</h2>${table(analytics.journalRows, journalColumns, 100)}<h2>Colaborações internas</h2>${table(analytics.collaborationRows, ['Docente1', 'Docente2', 'ArtigosCompartilhados', 'PontuacaoCompartilhada'], 100)}<h2>Quantidade de produtos</h2>${table(results.quantityRows, results.columns)}<h2>Pontuação por produto</h2>${table(results.pointsRows, results.columns)}<h2>Faixas SJR</h2>${table(results.sjrPercentiles, ['TipoSJR', 'SJRmin', 'SJRmax', 'Pesos'])}<h2>Faixas JCR</h2>${table(results.jcrPercentiles, ['TipoJCR', 'JCRmin', 'JCRmax', 'Pesos'])}</body></html>`;
 }
 
 function downloadBlob(blob, name) {
@@ -1528,21 +1832,24 @@ function buildDownloadZip() {
   const entries = [];
   const analytics = results.analytics;
 
-  // Arquivos históricos: nomes e estruturas principais preservados.
+  // Arquivos históricos preservados e nova tabela de faixas JCR.
   const xlsxFiles = [
     [`${prefix}_PontuacaoTotal.xlsx`, 'PontuacaoTotal', results.totalRows, ['Nomes', 'TotalPontos']],
     [`${prefix}_QuantidadeProdutos.xlsx`, 'QuantidadeProdutos', results.quantityRows, results.columns],
     [`${prefix}_PontuacaoProdutos.xlsx`, 'PontuacaoProdutos', results.pointsRows, results.columns],
-    [`${prefix}_SJR_Percentis.xlsx`, 'SJR_Percentis', results.percentiles, ['TipoSJR', 'SJRmin', 'SJRmax', 'Pesos']]
+    [`${prefix}_SJR_Percentis.xlsx`, 'SJR_Percentis', results.sjrPercentiles, ['TipoSJR', 'SJRmin', 'SJRmax', 'Pesos']],
+    [`${prefix}_JCR_Faixas.xlsx`, 'JCR_Faixas', results.jcrPercentiles, ['TipoJCR', 'JCRmin', 'JCRmax', 'Pesos']]
   ];
-  for (const [name, sheetName, rows, columns] of xlsxFiles) entries.push({ name, data: xlsxBytes([{ name: sheetName, rows: objectRowsToMatrix(rows, columns) }]) });
+  for (const [name, sheetName, rows, columns] of xlsxFiles) {
+    entries.push({ name, data: xlsxBytes([{ name: sheetName, rows: objectRowsToMatrix(rows, columns) }]) });
+  }
 
-  const indicatorColumns = ['Nomes', 'TotalPontos', 'Artigos', 'PontosPorArtigo', 'ArtigosQualisA', 'CoberturaDOI_pct', 'CoberturaCAPES_pct', 'CoberturaSJR_pct', 'Livros', 'Capitulos', 'OrientacoesConcluidas', 'OrientacoesAndamento', 'ProducaoTecnicaInovacao', 'ArtigosColaboracaoInterna', 'ParceirosInternos', 'BolsistaProdutividade'];
+  const indicatorColumns = ['Nomes', 'TotalPontos', 'Artigos', 'PontosPorArtigo', 'ArtigosQualisA', 'ArtigosJCRQ1', 'CoberturaDOI_pct', 'CoberturaCAPES_pct', 'CoberturaSJR_pct', 'CoberturaJCR_pct', 'Livros', 'Capitulos', 'OrientacoesConcluidas', 'OrientacoesAndamento', 'ProducaoTecnicaInovacao', 'ArtigosColaboracaoInterna', 'ParceirosInternos', 'BolsistaProdutividade'];
   const annualColumns = ['Ano', 'Artigos', 'ArtigosUnicos', 'Livros', 'CapLivros', 'TrabCompleto', 'OrientacoesConcluidas', 'OrientacoesAndamento', 'Bancas', 'ProducaoTecnicaInovacao', 'PontuacaoArtigosUnicos'];
   const qualityColumns = ['Sistema', 'Estrato', 'Artigos'];
-  const journalColumns = ['Periodico', 'ISSN', 'ArtigosUnicos', 'PontuacaoReferencia', 'SJRMedio', 'NumeroDocentes', 'Docentes'];
+  const journalColumns = ['Periodico', 'ISSN', 'ArtigosUnicos', 'PontuacaoReferencia', 'SJRMedio', 'JIFMedio', 'MelhorQuartilJCR', 'CategoriasJCR', 'NumeroDocentes', 'Docentes'];
   const collaborationColumns = ['Docente1', 'Docente2', 'ArtigosCompartilhados', 'PontuacaoCompartilhada'];
-  const uniqueArticleColumns = ['Ano', 'Titulo', 'Periodico', 'ISSN', 'DOI', 'QualisCAPES', 'SJR', 'FaixaSJR', 'PesoReferencia', 'NumeroDocentesUFJ', 'DocentesUFJ', 'ParticipacoesNosCurriculos'];
+  const uniqueArticleColumns = ['Ano', 'Titulo', 'Periodico', 'ISSN', 'DOI', 'QualisCAPES', 'SJR', 'FaixaSJR', 'JCR', 'FaixaJCR', 'QuartilJCR', 'CategoriasJCR', 'PesoReferencia', 'NumeroDocentesUFJ', 'DocentesUFJ', 'ParticipacoesNosCurriculos'];
 
   entries.push({
     name: `${prefix}_Completo.xlsx`,
@@ -1550,7 +1857,8 @@ function buildDownloadZip() {
       { name: 'PontuacaoTotal', rows: objectRowsToMatrix(results.totalRows, ['Nomes', 'TotalPontos']) },
       { name: 'QuantidadeProdutos', rows: objectRowsToMatrix(results.quantityRows, results.columns) },
       { name: 'PontuacaoProdutos', rows: objectRowsToMatrix(results.pointsRows, results.columns) },
-      { name: 'SJR_Percentis', rows: objectRowsToMatrix(results.percentiles, ['TipoSJR', 'SJRmin', 'SJRmax', 'Pesos']) },
+      { name: 'SJR_Percentis', rows: objectRowsToMatrix(results.sjrPercentiles, ['TipoSJR', 'SJRmin', 'SJRmax', 'Pesos']) },
+      { name: 'JCR_Faixas', rows: objectRowsToMatrix(results.jcrPercentiles, ['TipoJCR', 'JCRmin', 'JCRmax', 'Pesos']) },
       { name: 'IndicadoresDocentes', rows: objectRowsToMatrix(analytics.indicatorRows, indicatorColumns) },
       { name: 'ProducaoAnual', rows: objectRowsToMatrix(analytics.annualRows, annualColumns) },
       { name: 'QualidadeArtigos', rows: objectRowsToMatrix(analytics.qualityRows, qualityColumns) },
@@ -1570,7 +1878,9 @@ function buildDownloadZip() {
       { name: 'Colaboracoes', rows: objectRowsToMatrix(analytics.collaborationRows, collaborationColumns) },
       { name: 'ArtigosUnicos', rows: objectRowsToMatrix(analytics.uniqueArticles, uniqueArticleColumns) },
       { name: 'ComposicaoPontos', rows: objectRowsToMatrix(analytics.productPointsRows, ['Categoria', 'Codigo', 'Pontuacao']) },
-      { name: 'ComposicaoQuantidades', rows: objectRowsToMatrix(analytics.productQuantityRows, ['Categoria', 'Codigo', 'Quantidade']) }
+      { name: 'ComposicaoQuantidades', rows: objectRowsToMatrix(analytics.productQuantityRows, ['Categoria', 'Codigo', 'Quantidade']) },
+      { name: 'FaixasSJR', rows: objectRowsToMatrix(results.sjrPercentiles, ['TipoSJR', 'SJRmin', 'SJRmax', 'Pesos']) },
+      { name: 'FaixasJCR', rows: objectRowsToMatrix(results.jcrPercentiles, ['TipoJCR', 'JCRmin', 'JCRmax', 'Pesos']) }
     ])
   });
 
@@ -1581,30 +1891,47 @@ function buildDownloadZip() {
   entries.push({ name: `Analises/${prefix}_ColaboracoesInternas.csv`, data: rowsToCsv(analytics.collaborationRows, collaborationColumns, ';') });
   entries.push({ name: `Analises/${prefix}_ArtigosUnicos.csv`, data: rowsToCsv(analytics.uniqueArticles, uniqueArticleColumns, ';') });
   entries.push({ name: `Analises/${prefix}_ComposicaoPontuacao.csv`, data: rowsToCsv(analytics.productPointsRows, ['Categoria', 'Codigo', 'Pontuacao'], ';') });
+  entries.push({ name: `Analises/${prefix}_FaixasSJR.csv`, data: rowsToCsv(results.sjrPercentiles, ['TipoSJR', 'SJRmin', 'SJRmax', 'Pesos'], ';') });
+  entries.push({ name: `Analises/${prefix}_FaixasJCR.csv`, data: rowsToCsv(results.jcrPercentiles, ['TipoJCR', 'JCRmin', 'JCRmax', 'Pesos'], ';') });
 
   for (const researcher of results.researchers) {
     const base = `${safeFileName(researcher.name)}${start}-${end}_${scoreMode}`;
     // Arquivos anteriores preservados.
     entries.push({ name: `Artigos_docentes/${base}.csv`, data: rowsToCsv(researcher.articleRows, ['Nome', 'Periodico', 'ISSN', 'QualisCAPES', 'SJR', 'Ano', 'Peso']) });
     if (researcher.eventRows.length) entries.push({ name: `Trabalhos_completos/${base}.csv`, data: rowsToCsv(researcher.eventRows, ['NomeEvento', 'QualisCAPES', 'Ano', 'Peso']) });
-    // Versão detalhada adicional.
-    entries.push({ name: `Artigos_docentes_detalhados/${base}.csv`, data: rowsToCsv(researcher.articleRows, ['Nome', 'Ano', 'Titulo', 'Periodico', 'ISSN', 'DOI', 'QualisCAPES', 'SJR', 'FaixaSJR', 'FontePontuacao', 'PesoBruto', 'Peso', 'NumeroAutores', 'Autores'], ';') });
+    // Versão detalhada adicional com JCR.
+    entries.push({
+      name: `Artigos_docentes_detalhados/${base}.csv`,
+      data: rowsToCsv(researcher.articleRows, ['Nome', 'Ano', 'Titulo', 'Periodico', 'ISSN', 'DOI', 'QualisCAPES', 'SJR', 'FaixaSJR', 'JCR', 'FaixaJCR', 'QuartilJCR', 'CategoriasJCR', 'FontePontuacao', 'PesoBruto', 'Peso', 'NumeroAutores', 'Autores'], ';')
+    });
   }
 
   entries.push({ name: 'Relatorio_PapaLattes.html', data: makeReportHtml(results) });
-  entries.push({ name: 'LEIA-ME.txt', data: `PapaLattes Web Analítico\r\nPeríodo: ${start}-${end}\r\nPontuação: ${scoreMode}\r\nRegras: PapaLattes 1.2.1 corrigidas\r\nCurrículos processados: ${results.researchers.length}\r\nParticipações em artigos: ${analytics.articleParticipations.length}\r\nArtigos únicos: ${analytics.summary.uniqueArticleCount}\r\nArtigos com colaboração interna: ${analytics.summary.collaborationArticleCount}\r\n\r\nOs quatro arquivos XLSX históricos foram mantidos. O pacote também inclui análises institucionais, indicadores docentes, produção anual, qualidade, periódicos, colaborações e artigos únicos.\r\nGerado em: ${new Date().toLocaleString('pt-BR')}\r\n` });
+  entries.push({
+    name: 'LEIA-ME.txt',
+    data: `PapaLattes Web Analítico\r\nPeríodo: ${start}-${end}\r\nPontuação: ${scoreModeLabel(scoreMode)}\r\nRegras: PapaLattes 1.2.1 corrigidas\r\nJCR: edição 2026, Fator de Impacto de 2025\r\nCurrículos processados: ${results.researchers.length}\r\nParticipações em artigos: ${analytics.articleParticipations.length}\r\nArtigos únicos: ${analytics.summary.uniqueArticleCount}\r\nCobertura CAPES: ${formatNumber(analytics.summary.capesCoverage, 1)}%\r\nCobertura SJR: ${formatNumber(analytics.summary.sjrCoverage, 1)}%\r\nCobertura JCR: ${formatNumber(analytics.summary.jcrCoverage, 1)}%\r\nArtigos com colaboração interna: ${analytics.summary.collaborationArticleCount}\r\n\r\nOs quatro arquivos XLSX históricos foram mantidos e foi acrescentado o arquivo de faixas JCR. O pacote também inclui análises institucionais, indicadores docentes, produção anual, qualidade, periódicos, colaborações e artigos únicos.\r\nGerado em: ${new Date().toLocaleString('pt-BR')}\r\n`
+  });
   return zipStore(entries);
 }
 
+function prepareDownloadLink() {
+  if (!state.results) return;
+  if (state.downloadUrl) URL.revokeObjectURL(state.downloadUrl);
+  const bytes = buildDownloadZip();
+  const config = state.results.config;
+  const fileName = `PapaLattes_Resultados_${config.start}_${config.end}_${config.scoreMode}.zip`;
+  state.downloadUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+  [els.downloadLink, els.downloadLinkResults].forEach((link) => {
+    link.href = state.downloadUrl;
+    link.download = fileName;
+    link.textContent = `Baixar resultados — ${fileName}`;
+    link.classList.remove('hidden');
+  });
+}
+
 async function downloadResults() {
-  els.downloadBtn.disabled = true;
-  try {
-    const bytes = buildDownloadZip();
-    const config = state.results.config;
-    downloadBlob(new Blob([bytes], { type: 'application/zip' }), `PapaLattes_Resultados_${config.start}_${config.end}_${config.scoreMode}.zip`);
-  } finally {
-    els.downloadBtn.disabled = false;
-  }
+  if (!state.downloadUrl) prepareDownloadLink();
+  els.downloadLink.click();
 }
 
 // -----------------------------------------------------------------------------
@@ -1625,6 +1952,7 @@ function installEvents() {
   });
   bindReferenceInput(els.qualisFile, 'qualis');
   bindReferenceInput(els.sjrFile, 'sjr');
+  bindReferenceInput(els.jcrFile, 'jcr');
   bindReferenceInput(els.eventsFile, 'events');
   bindReferenceInput(els.articleWeightsFile, 'articleWeights');
   bindReferenceInput(els.generalWeightsFile, 'generalWeights');
@@ -1652,13 +1980,19 @@ function installEvents() {
       els.tableContainer.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
     }
   });
-  els.downloadBtn.addEventListener('click', () => {
-    try { downloadResults(); }
-    catch (error) { alert(error.message); }
-  });
+  [els.downloadLink, els.downloadLinkResults].forEach((link) => link.addEventListener('click', () => {
+    log('Download do pacote de resultados iniciado.');
+  }));
   els.profileResearcher.addEventListener('change', () => {
     state.profileResearcher = els.profileResearcher.value;
-    renderResearcherProfile(state.profileResearcher);
+    renderProfileSection();
+  });
+  els.profileAnalysisMode.addEventListener('change', () => {
+    state.profileView = els.profileAnalysisMode.value;
+    renderProfileSection();
+  });
+  window.addEventListener('beforeunload', () => {
+    if (state.downloadUrl) URL.revokeObjectURL(state.downloadUrl);
   });
   document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => {
     state.activeTab = button.dataset.tab;
