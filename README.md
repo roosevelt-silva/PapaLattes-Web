@@ -9,7 +9,7 @@ A aplicação utiliza exclusivamente as **regras corrigidas do PapaLattes 1.2.1*
 - leitura de currículos Lattes em **ZIP** ou **XML**;
 - seleção simultânea de vários currículos;
 - leitura de um ZIP agregador contendo XMLs ou outros ZIPs de currículos;
-- pontuação de artigos por **CAPES**, **SJR** ou pelo maior valor entre os dois (**MELHOR**);
+- pontuação de artigos por **CAPES**, **SJR**, **JCR**, pelo maior valor entre **CAPES + SJR** ou pelo maior valor entre **CAPES + JCR**;
 - leitura corrigida de livros, capítulos e coorientações em andamento;
 - distinção entre artigos não indexados com e sem DOI;
 - inclusão de todas as categorias na soma final;
@@ -27,7 +27,7 @@ Além das tabelas tradicionais, a página apresenta:
 - distribuição dos artigos por estrato CAPES;
 - relação entre quantidade de artigos e pontuação total;
 - média, mediana, índice de Gini e participação do grupo de maior pontuação;
-- cobertura de DOI, CAPES e SJR;
+- cobertura de DOI, CAPES, SJR e JCR;
 - periódicos mais frequentes;
 - artigos únicos, sem duplicar coautorias entre docentes analisados;
 - colaborações internas identificadas por artigos presentes em mais de um currículo;
@@ -51,7 +51,7 @@ A versão web aplica as correções realizadas nas bibliotecas em R:
 Publique o projeto no GitHub Pages e abra o endereço fornecido pelo GitHub.
 
 1. Informe o período da análise.
-2. Escolha `CAPES`, `SJR` ou `MELHOR`.
+2. Escolha CAPES, SJR, JCR, MELHOR CAPES + SJR ou MELHOR CAPES + JCR.
 3. Selecione os currículos Lattes.
 4. Clique em **Processar currículos**.
 5. Consulte o ranking, os gráficos e as tabelas.
@@ -72,6 +72,7 @@ A pasta `data/` contém:
 
 - `qualis_periodicos.csv`;
 - `sjr.csv`;
+- `jcr_2026.csv`;
 - `qualis_eventos.csv`;
 - `pesos_artigos.csv`;
 - `pesos_producao_geral.csv`;
@@ -103,6 +104,8 @@ Os arquivos tradicionais continuam sendo produzidos com os mesmos nomes:
 
 Também são gerados:
 
+- `Prod_PERIODO_MODO_JCR_Faixas.xlsx`;
+
 - `Prod_PERIODO_MODO_AnalisesInstitucionais.xlsx`;
 - indicadores por docente;
 - produção anual;
@@ -114,7 +117,7 @@ Também são gerados:
 - CSVs analíticos na pasta `Analises/`;
 - artigos detalhados na pasta `Artigos_docentes_detalhados/`.
 
-A planilha `Completo.xlsx` mantém as quatro abas tradicionais e acrescenta as novas análises.
+A planilha `Completo.xlsx` mantém as abas tradicionais, acrescenta as faixas JCR e inclui as novas análises.
 
 ## Publicação no GitHub Pages
 
@@ -153,3 +156,18 @@ Os currículos são processados pelas APIs do próprio navegador. A aplicação 
 ## Identidade visual
 
 A página utiliza a assinatura visual horizontal oficial da Universidade Federal de Jataí, armazenada localmente em `assets/logo-ufj.png`.
+
+## Estratificação JCR
+
+A tabela JCR 2026 contém o Fator de Impacto de 2025. A aplicação ordena os valores de JIF e constrói, pelo método de quantis tipo 7, as mesmas faixas de peso usadas na estratificação SJR. Artigos sem correspondência JCR recebem o peso de artigo com ou sem DOI, conforme o currículo. O quartil JCR original também é preservado para análise, mas a pontuação JCR utiliza as faixas calculadas a partir do JIF.
+
+## Atualização: síntese de qualidade e dez melhores artigos
+
+A interface foi reorganizada em duas partes:
+
+1. síntese institucional, com histogramas CAPES e, conforme o modo, SJR/JCR;
+2. perfil individual ao final da página, com opção de comparação dos dez melhores artigos de cada docente.
+
+O pacote ZIP de resultados passa a ser criado automaticamente ao término do processamento, deixando o link de download imediatamente disponível.
+
+Consulte `MELHORIAS_QUALIDADE_TOP10.md` para a descrição completa e `docs/VALIDACAO_QUALIDADE_TOP10.md` para os testes realizados.
