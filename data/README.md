@@ -22,6 +22,19 @@ Issn;SJR
 
 Uma célula de `Issn` pode conter mais de um ISSN separado por vírgula.
 
+
+## `jcr_2026.csv`
+
+Tabela consolidada da edição JCR 2026, com o Fator de Impacto referente a 2025.
+
+Colunas usadas pela aplicação:
+
+```text
+Titulo;ISSN;eISSN;Categorias;Indices;Citacoes;JIF_2025;QuartilMelhor;Quartis
+```
+
+O ISSN impresso e o eISSN são indexados. Quando um periódico pertence a mais de uma categoria, `QuartilMelhor` mantém o melhor quartil, enquanto `Quartis` e `Categorias` preservam todas as classificações. Valores originalmente informados como `<0.1` foram representados por `0.05` para permitir a estratificação numérica.
+
 ## `qualis_eventos.csv`
 
 ```text
