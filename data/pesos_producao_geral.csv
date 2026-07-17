@@ -18,7 +18,7 @@
 "CoOrientDoutConc",25,
 "OrientPosDoutConc",25,
 "OrientICConc",10,250
-"OrientTCCConc",3,30
+"OrientTCCConc",4,40
 "OrientMonConc","3",30
 "OrientICAnd",5,125
 "OrientTCCAnd","1,5",15
@@ -35,4 +35,4 @@
 "ProdArtesVisuais",15,
 "ProdArtesCenicas",15,
 "ProdMusicas",15,
-"ProdutividadeCNPq",100,
+"ProdutividadeCNPq",200,
